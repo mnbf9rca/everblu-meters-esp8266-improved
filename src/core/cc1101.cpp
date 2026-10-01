@@ -45,7 +45,7 @@ static inline void FEED_WDT()
 
 uint8_t RF_config_u8 = 0xFF;
 uint8_t PA[] = {
-    0x60,
+    0xC0, // Diagnostic test: approximately +10 dBm at 433 MHz (TI Table 39).
     0x00,
     0x00,
     0x00,
