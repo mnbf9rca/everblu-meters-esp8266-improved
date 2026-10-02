@@ -46,6 +46,7 @@ class EverbluMeterTriggerButton final : public button::Button {
  public:
   void set_parent(EverbluMeterComponent *parent) { this->parent_ = parent; }
   void set_deep_scan(bool is_deep_scan) { this->is_deep_scan_ = is_deep_scan; }
+  void set_predefined_capture(bool capture) { this->is_predefined_capture_ = capture; }
   void set_full_fdr(bool full_fdr) { this->is_full_fdr_ = full_fdr; }
   void set_scan(bool is_scan) { this->is_scan_ = is_scan; }
   void set_reset_frequency(bool is_reset) { this->is_reset_frequency_ = is_reset; }
@@ -60,6 +61,7 @@ class EverbluMeterTriggerButton final : public button::Button {
   bool is_deep_scan_{false};
   bool is_scan_{false};
   bool is_full_fdr_{false};
+  bool is_predefined_capture_{false};
   bool is_reset_frequency_{false};
   bool is_stop_{false};
   bool is_diagnostic_{false};
@@ -149,6 +151,7 @@ class EverbluMeterComponent final : public PollingComponent,
   // External actions
   void request_manual_read();
   void request_full_fdr();
+  void request_predefined_capture();
   void request_deep_scan();
   void request_scan();
   void request_reset_frequency();

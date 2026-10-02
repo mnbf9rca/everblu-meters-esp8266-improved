@@ -10,6 +10,12 @@
 
 #include "native_fakes.h"
 
+void test_predefined_capture_steps_all_selectors_without_retry_or_retuning();
+void test_predefined_capture_stop_and_other_meter_guards();
+
+void test_predefined_capture_handles_stop_from_publication_callbacks();
+void test_predefined_capture_rejects_busy_and_releases_failed_initialisation();
+
 void meterReaderSetUp();
 void frequencyManagerSetUp();
 
@@ -278,5 +284,9 @@ int main(int, char **)
     RUN_TEST(test_staged_scan_prefers_reliable_decodes_over_lower_error);
     RUN_TEST(test_staged_scan_carries_on_through_a_quiet_spell);
 
+    RUN_TEST(test_predefined_capture_steps_all_selectors_without_retry_or_retuning);
+    RUN_TEST(test_predefined_capture_stop_and_other_meter_guards);
+    RUN_TEST(test_predefined_capture_handles_stop_from_publication_callbacks);
+    RUN_TEST(test_predefined_capture_rejects_busy_and_releases_failed_initialisation);
     return UNITY_END();
 }

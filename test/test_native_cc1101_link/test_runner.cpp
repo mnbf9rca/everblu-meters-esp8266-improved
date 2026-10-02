@@ -72,6 +72,9 @@ void setUp(void)
 
 void tearDown(void) {}
 
+void test_predefined_capture_preserves_short_and_maximum_frames();
+void test_predefined_capture_reports_invalid_and_partial_responses();
+
 int main(int, char **)
 {
     UNITY_BEGIN();
@@ -134,5 +137,7 @@ int main(int, char **)
     RUN_TEST(test_fdr_complete_synthetic_pair_and_failures);
     RUN_TEST(test_read_preserves_receive_time_frequency_estimate);
     RUN_TEST(test_standard_request_remains_exactly_39_bytes);
+    RUN_TEST(test_predefined_capture_preserves_short_and_maximum_frames);
+    RUN_TEST(test_predefined_capture_reports_invalid_and_partial_responses);
     return UNITY_END();
 }

@@ -51,6 +51,7 @@ struct FakeRadio
     std::vector<tmeter_data> responses;
     std::vector<Call> calls;
     std::vector<Call> fdrCalls;
+    std::vector<uint8_t> predefinedSelectors;
     radian_fdr_data fdrResponse{};
     bool fdrSucceeds = true;
     unsigned long fdrDurationMs = 0;

@@ -92,6 +92,7 @@ CONF_RADIO_STATE = "radio_state"
 CONF_TIMESTAMP = "timestamp"
 CONF_HISTORY_JSON = "history_json"
 CONF_FDR_HISTORY_JSON = "fdr_history_json"
+CONF_REQUEST_PREDEFINED_CAPTURE_BUTTON = "request_predefined_capture_button"
 CONF_REQUEST_FULL_FDR_BUTTON = "request_full_fdr_button"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_METER_SERIAL_SENSOR = "meter_serial_sensor"
@@ -382,6 +383,11 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FDR_HISTORY_JSON): text_sensor.text_sensor_schema(
                 icon="mdi:history",
             ).extend({cv.Optional(CONF_INTERNAL, default=True): cv.boolean}),
+            cv.Optional(CONF_REQUEST_PREDEFINED_CAPTURE_BUTTON): button.button_schema(
+                EverbluMeterTriggerButton,
+                icon="mdi:download",
+                entity_category="diagnostic",
+            ),
             cv.Optional(CONF_REQUEST_FULL_FDR_BUTTON): button.button_schema(
                 EverbluMeterTriggerButton, icon="mdi:database-arrow-down"
             ),
@@ -735,6 +741,11 @@ async def to_code(config):
     if CONF_FDR_HISTORY_JSON in config:
         sens = await text_sensor.new_text_sensor(config[CONF_FDR_HISTORY_JSON])
         cg.add(var.set_fdr_history_sensor(sens))
+
+    if CONF_REQUEST_PREDEFINED_CAPTURE_BUTTON in config:
+        btn = await button.new_button(config[CONF_REQUEST_PREDEFINED_CAPTURE_BUTTON])
+        cg.add(btn.set_parent(var))
+        cg.add(btn.set_predefined_capture(True))
 
     if CONF_REQUEST_FULL_FDR_BUTTON in config:
         btn = await button.new_button(config[CONF_REQUEST_FULL_FDR_BUTTON])

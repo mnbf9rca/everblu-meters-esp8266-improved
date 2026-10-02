@@ -95,6 +95,8 @@ public:
     // Manual, blocking fresh standard read followed by read-only FDR frames 7/8.
     // No retries or scans; pending scheduled and post-scan work stays queued.
     bool readFullFdr();
+    // Diagnostic-only sequence: one documented 0x70 selector per loop step.
+    bool startPredefinedCapture();
     static bool isFullFdrInProgress();
 
     /**
@@ -210,6 +212,12 @@ private:
      * @brief Reset retry counter and cooldown
      */
     void resetRetryState();
+
+    void stepPredefinedCapture();
+    void finishPredefinedCapture(const char *status);
+    uint8_t m_captureSelector = 0;
+    uint8_t m_captureValidated = 0;
+    uint32_t m_captureStepAt = 0;
 
     // Dependencies (injected)
     IConfigProvider *m_config;

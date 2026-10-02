@@ -1648,3 +1648,103 @@ void test_fdr_rejects_gas_before_radio_and_preserves_standard_read()
     TEST_ASSERT_EQUAL(1, fakeRadio().calls.size());
     TEST_ASSERT_EQUAL(1, g_publisher.readings.size());
 }
+
+void test_predefined_capture_steps_all_selectors_without_retry_or_retuning()
+{
+    MeterReader reader = makeReader();
+    const size_t saves = fakeStorage().saveCalls;
+    TEST_ASSERT_TRUE(reader.startPredefinedCapture());
+    TEST_ASSERT_TRUE(reader.isReadingInProgress());
+    for (unsigned selector = 0; selector <= 10; ++selector)
+    {
+        advanceAndLoop(reader, 1000);
+        TEST_ASSERT_EQUAL(selector + 1, fakeRadio().predefinedSelectors.size());
+        TEST_ASSERT_EQUAL(selector, fakeRadio().predefinedSelectors.back());
+        if (selector < 10) TEST_ASSERT_TRUE(reader.isReadingInProgress());
+    }
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(MeterReader::isFullFdrInProgress());
+    TEST_ASSERT_EQUAL(0, fakeRadio().calls.size());
+    TEST_ASSERT_EQUAL(0, fakeRadio().fdrCalls.size());
+    TEST_ASSERT_FALSE(FrequencyManager::isScanInProgress());
+    TEST_ASSERT_EQUAL(saves, fakeStorage().saveCalls);
+    TEST_ASSERT_EQUAL_STRING("Predefined capture complete: 10/11 frames validated", g_publisher.lastStatus().c_str());
+}
+
+void test_predefined_capture_stop_and_other_meter_guards()
+{
+    MeterReader reader = makeReader();
+    FakeConfig otherConfig;
+    RecordingPublisher otherPublisher;
+    MeterReader other(&otherConfig, &g_time, &otherPublisher);
+    other.begin();
+    TEST_ASSERT_TRUE(reader.startPredefinedCapture());
+    reader.loop();
+    TEST_ASSERT_EQUAL(1, fakeRadio().predefinedSelectors.size());
+    const size_t inits = fakeRadio().initFrequencies.size();
+    other.loop();
+    other.triggerReading(false);
+    other.performFrequencyScan();
+    other.resetFrequencyOffset();
+    other.stopReading();
+    TEST_ASSERT_FALSE(other.startPredefinedCapture());
+    TEST_ASSERT_FALSE(other.readFullFdr());
+    TEST_ASSERT_EQUAL(inits, fakeRadio().initFrequencies.size());
+    TEST_ASSERT_TRUE(reader.isReadingInProgress());
+    reader.stopReading();
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(MeterReader::isFullFdrInProgress());
+    advanceAndLoop(reader, 1000);
+    TEST_ASSERT_EQUAL(1, fakeRadio().predefinedSelectors.size());
+    TEST_ASSERT_EQUAL(0, fakeRadio().calls.size());
+}
+
+void test_predefined_capture_handles_stop_from_publication_callbacks()
+{
+    struct StopPublisher : RecordingPublisher
+    {
+        MeterReader *reader = nullptr;
+        bool cancelOnStart = true;
+        unsigned completions = 0;
+        void publishActiveReading(bool active) override
+        {
+            RecordingPublisher::publishActiveReading(active);
+            if (!reader) return;
+            if (!active) ++completions;
+            if (!active || cancelOnStart) reader->stopReading();
+        }
+    } publisher;
+    MeterReader reader(&g_config, &g_time, &publisher);
+    reader.begin();
+    publisher.reader = &reader;
+    TEST_ASSERT_FALSE(reader.startPredefinedCapture());
+    TEST_ASSERT_EQUAL(1, publisher.completions);
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(MeterReader::isFullFdrInProgress());
+    TEST_ASSERT_EQUAL_STRING("Idle", publisher.lastRadioState().c_str());
+    TEST_ASSERT_EQUAL(0, fakeRadio().predefinedSelectors.size());
+
+    publisher.cancelOnStart = false;
+    TEST_ASSERT_TRUE(reader.startPredefinedCapture());
+    for (unsigned i = 0; i <= 10; ++i) advanceAndLoop(reader, 1000);
+    TEST_ASSERT_EQUAL(2, publisher.completions);
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(MeterReader::isFullFdrInProgress());
+}
+
+void test_predefined_capture_rejects_busy_and_releases_failed_initialisation()
+{
+    MeterReader reader = makeReader();
+    fakeRadio().initSucceeds = false;
+    TEST_ASSERT_TRUE(reader.startPredefinedCapture());
+    reader.loop();
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(MeterReader::isFullFdrInProgress());
+    TEST_ASSERT_EQUAL(0, fakeRadio().predefinedSelectors.size());
+    fakeRadio().initSucceeds = true;
+    reader.triggerReading(false); // No reply: regular retry remains pending.
+    TEST_ASSERT_FALSE(reader.startPredefinedCapture());
+    reader.stopReading();
+    g_config.meterIsGas = true;
+    TEST_ASSERT_FALSE(reader.startPredefinedCapture());
+}

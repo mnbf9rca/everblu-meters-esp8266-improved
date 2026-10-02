@@ -1639,7 +1639,8 @@ uint8_t decode_4bitpbit_serial(uint8_t *rxBuffer, int l_total_byte, uint8_t *dec
    Note: The received data is 4x larger than the decoded size due to oversampling
    and needs to be processed by decode_4bitpbit_serial() to extract actual data.
 */
-int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rxBuffer_size, int8_t *frequency_estimate = nullptr)
+static int receive_radian_frame_impl(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rxBuffer_size,
+                                     int8_t *frequency_estimate, bool capture_partial)
 {
   uint8_t l_byte_in_rx = 0;
   uint16_t l_total_byte = 0;
@@ -1788,7 +1789,8 @@ int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rx
   // ACK-then-data reply timing the meter expects. (An earlier capture-to-end
   // experiment lingered on noise and broke reads - see git history.)
   uint16_t l_expected_bytes = l_radian_frame_size_byte * 4;
-  bool l_use_gdo2 = (GET_GDO2_PIN() >= 0);
+  // Diagnostic capture has no known tail boundary: poll even below the threshold.
+  bool l_use_gdo2 = !capture_partial && (GET_GDO2_PIN() >= 0);
   while ((l_total_byte < l_expected_bytes) && (l_tmo < rx_tmo_ms))
   {
     delay(5);
@@ -1829,7 +1831,7 @@ int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rx
   else
   {
     echo_debug(debug_out, "[ERROR] Timeout or no data received (got %d bytes)\n", l_total_byte);
-    return 0;
+    if (!capture_partial) return 0;
   }
 
   /*stop reception*/
@@ -1845,6 +1847,12 @@ int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rx
   halRfWriteReg(SYNC1, SYNC1_PATTERN_55);         // Restore sync word MSB: 0x55
   halRfWriteReg(SYNC0, SYNC0_PATTERN_00);         // Restore sync word LSB: 0x00
   return l_total_byte;
+}
+
+int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rxBuffer_size,
+                         int8_t *frequency_estimate = nullptr)
+{
+  return receive_radian_frame_impl(size_byte, rx_tmo_ms, rxBuffer, rxBuffer_size, frequency_estimate, false);
 }
 
 /*
@@ -1933,7 +1941,8 @@ static uint8_t meter_data[300];
 // Shared wake-up / interrogation / ACK / data exchange. The caller supplies a
 // decoded buffer of at least 200 bytes (the decoder's existing bounded limit).
 static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t response_size,
-                                   uint8_t *decoded_buffer, bool *frame_received = nullptr, int8_t *frequency_estimate = nullptr)
+                                   uint8_t *decoded_buffer, bool *frame_received = nullptr, int8_t *frequency_estimate = nullptr,
+                                   bool diagnostic_capture = false)
 {
   if (frame_received) *frame_received = false;
   if (!tx_size || tx_size > 64) return 0;
@@ -1942,7 +1951,7 @@ static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t res
   uint8_t wup2send = 77;
   uint16_t tmo = 0;
   size_t request_bytes_queued = 0;
-  static uint8_t rxBuffer[1500]; // Make static to avoid stack overflow
+  static uint8_t rxBuffer[1536]; // Make static to avoid stack overflow
   int rxBuffer_size;
   memset(rxBuffer, 0, sizeof(rxBuffer)); // Clear static buffer
 
@@ -2244,12 +2253,32 @@ static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t res
   }
   // delay(30); //50ms de 111111  , mais on a 7+3ms de printf et xxms calculs
   /*34ms 0101...01  14.25ms 000...000  14ms 1111...11111  582ms de data avec l'index */
-  echo_debug(1, "[METER] Waiting for data frame (%u-byte frame, 1000ms timeout)...\n", (unsigned)response_size);
-  rxBuffer_size = receive_radian_frame(response_size, 1000, rxBuffer, sizeof(rxBuffer), frequency_estimate);
+  echo_debug(1, "[METER] Waiting for data frame (%u-byte %s, %ums timeout)...\n", (unsigned)response_size,
+             diagnostic_capture ? "capture limit" : "frame", diagnostic_capture ? 2000u : 1000u);
+  rxBuffer_size = diagnostic_capture
+      ? receive_radian_frame_impl(255, 2000, rxBuffer, sizeof(rxBuffer), frequency_estimate, true)
+      : receive_radian_frame(response_size, 1000, rxBuffer, sizeof(rxBuffer), frequency_estimate);
+  if (diagnostic_capture)
+    echo_debug(1, "[CAPTURE] RX window: %d/1536 oversampled bytes (bounded, may include trailing noise)\n", rxBuffer_size);
   if (rxBuffer_size)
   {
     echo_debug(1, "[METER] Data frame received - decoding %d raw bytes...\n", rxBuffer_size);
-    if (debug_out)
+    if (diagnostic_capture)
+    {
+      // Preserve demodulated evidence even if the serial decoder rejects it.
+      // 64-byte rows fit echo_debug's 256-byte formatting buffer.
+      for (int offset = 0; offset < rxBuffer_size; offset += 64)
+      {
+        char hex[64 * 3 + 1] = {};
+        const int count = rxBuffer_size - offset < 64 ? rxBuffer_size - offset : 64;
+        for (int i = 0; i < count; ++i)
+          snprintf(hex + i * 3, sizeof(hex) - i * 3, "%02X ", rxBuffer[offset + i]);
+        echo_debug(1, "[CAPTURE] RX oversampled [%04d]: %s\n", offset, hex);
+        FEED_WDT();
+        delay(2); // RF capture is complete; let the log transport drain.
+      }
+    }
+    else if (debug_out)
     {
       // Raw pre-decode oversampled buffer, for offline analysis of the
       // receive window sized to the expected response frame.
@@ -2258,7 +2287,8 @@ static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t res
     }
 
     if (frame_received) *frame_received = true;
-    return decode_4bitpbit_serial(rxBuffer, rxBuffer_size, decoded_buffer);
+    return diagnostic_capture ? radian_decode_4bitpbit(rxBuffer, rxBuffer_size, decoded_buffer, 255)
+                              : decode_4bitpbit_serial(rxBuffer, rxBuffer_size, decoded_buffer);
   }
   return 0;
 }
@@ -2397,9 +2427,9 @@ struct tmeter_data get_meter_data(void)
 #endif
 }
 
-static void log_fdr_bytes(const char *label, const uint8_t *bytes, size_t size)
+static void log_fdr_bytes(const char *label, const uint8_t *bytes, size_t size, bool capture = false)
 {
-  if (!debug_out) return;
+  if (!debug_out && !capture) return;
   // Short labelled chunks survive ESPHome's log message size limit.
   for (size_t offset = 0; offset < size; offset += 16)
   {
@@ -2407,7 +2437,7 @@ static void log_fdr_bytes(const char *label, const uint8_t *bytes, size_t size)
     size_t count = size - offset < 16 ? size - offset : 16;
     for (size_t i = 0; i < count; ++i)
       snprintf(hex + i * 3, sizeof(hex) - i * 3, "%02X ", bytes[offset + i]);
-    echo_debug(1, "[FDR] %s [%03u]: %s\n", label, (unsigned)offset, hex);
+    echo_debug(1, "[%s] %s [%03u]: %s\n", capture ? "CAPTURE" : "FDR", label, (unsigned)offset, hex);
   }
 }
 
@@ -2478,4 +2508,36 @@ bool read_full_fdr_for_meter(uint8_t year, uint32_t serial, radian_fdr_data *out
   log_fdr_bytes("Consumptions raw", result.consumptions, sizeof(result.consumptions));
   echo_debug(1, "[FDR] Full read complete: 180 interval-consumption bytes\n");
   return true;
+}
+
+bool capture_predefined_frame_for_meter(uint8_t year, uint32_t serial, uint8_t frame_number)
+{
+  // Only documented Cyble predefined reads; no configuration commands or ATS.
+  if (frame_number > 10) return false;
+  const uint8_t ats[7] = {};
+  uint8_t raw[29], encoded[64];
+  const size_t raw_size = radian_build_predefined_request(raw, sizeof(raw), year, serial, ats, 0, frame_number);
+  const size_t encoded_size = encode_radian_request(raw, raw_size, encoded, sizeof(encoded));
+  if (!encoded_size) return false;
+  echo_debug(1, "[CAPTURE] BEGIN command=0x70 selector=%u ATS=disabled\n", frame_number);
+  log_fdr_bytes("Request", raw, raw_size, true);
+  memset(meter_data, 0, sizeof(meter_data));
+  const int received = exchange_radian_request(encoded, encoded_size, 255, meter_data, nullptr, nullptr, true);
+  const unsigned declared = received ? meter_data[0] : 0;
+  const bool length_ok = declared >= 18 && declared <= unsigned(received);
+  const bool address_ok = received >= 15 && memcmp(meter_data + 3, raw + 9, 5) == 0 &&
+                          memcmp(meter_data + 9, raw + 3, 5) == 0;
+  const bool control_ok = received >= 2 && meter_data[1] == 0x11;
+  const bool crc_ok = length_ok && radian_validate_crc(meter_data, received);
+  const size_t frame_bytes = declared >= 18 && declared < unsigned(received) ? declared : received;
+  // Preserve every decoded byte, including failures and unknown configuration.
+  log_fdr_bytes("Response", meter_data, frame_bytes, true);
+  if (frame_bytes < unsigned(received))
+    log_fdr_bytes("Trailing decode (not response)", meter_data + frame_bytes, received - frame_bytes, true);
+  echo_debug(1, "[CAPTURE] selector=%u decoded=%d declared=%u length=%s CRC=%s address=%s control=%s byte16=0x%02X%s\n",
+             frame_number, received, declared, length_ok ? "OK" : "PARTIAL",
+             crc_ok ? "OK" : "BAD", address_ok ? "OK" : "BAD", control_ok ? "OK" : "BAD",
+             received > 16 ? meter_data[16] : 0, received > 16 ? " (raw, not interpreted)" : " (unavailable)");
+  echo_debug(1, "[CAPTURE] END selector=%u\n", frame_number);
+  return length_ok && address_ok && control_ok && crc_ok;
 }

@@ -38,6 +38,7 @@ void FakeRadio::reset()
 {
     responses.clear();
     fdrCalls.clear();
+    predefinedSelectors.clear();
     fdrResponse = {};
     fdrResponse.configuration.period = 0;
     fdrResponse.configuration.start_day = 1;
@@ -151,6 +152,12 @@ struct tmeter_data get_meter_data_for_meter(uint8_t meter_year, uint32_t meter_s
         return radio.responses.back();
     }
     return radio.responses[index];
+}
+
+bool capture_predefined_frame_for_meter(uint8_t, uint32_t, uint8_t selector)
+{
+    fakeRadio().predefinedSelectors.push_back(selector);
+    return selector != 2; // One missing frame must not prevent later captures.
 }
 
 bool read_full_fdr_for_meter(uint8_t year, uint32_t serial, radian_fdr_data *out)

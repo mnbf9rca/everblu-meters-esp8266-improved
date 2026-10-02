@@ -58,6 +58,8 @@ void EverbluMeterTriggerButton::press_action() {
 
   if (this->is_stop_) {
     this->parent_->request_stop_reading();
+  } else if (this->is_predefined_capture_) {
+    this->parent_->request_predefined_capture();
   } else if (this->is_full_fdr_) {
     this->parent_->request_full_fdr();
   } else if (this->is_deep_scan_) {
@@ -374,6 +376,16 @@ void EverbluMeterComponent::request_manual_read() {
   ESP_LOGI(TAG, "Manual read requested via button");
   this->apply_radio_context();
   this->meter_reader_->triggerReading(false);
+}
+
+void EverbluMeterComponent::request_predefined_capture() {
+  if (this->meter_reader_ == nullptr || !this->meter_initialized_ || FrequencyManager::isScanInProgress() ||
+      MeterReader::isFullFdrInProgress() || this->meter_reader_->isReadingInProgress()) {
+    ESP_LOGW(TAG, "Predefined capture ignored: radio busy or reader not ready");
+    return;
+  }
+  this->apply_radio_context();
+  this->meter_reader_->startPredefinedCapture();
 }
 
 void EverbluMeterComponent::request_full_fdr() {

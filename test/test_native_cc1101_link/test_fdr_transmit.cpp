@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <cstring>
+#include <sstream>
 #include "native_cc1101_device.h"
 #include "core/cc1101.h"
 #include "core/radian_parser.h"
@@ -266,4 +267,68 @@ void test_fdr_complete_synthetic_pair_and_failures() {
             TEST_ASSERT_EQUAL_UINT8_ARRAY(encoded, requests[i].data(), size);
         }
     }
+}
+
+
+// Diagnostic reads retain the whole response, regardless of selector schema.
+void test_predefined_capture_preserves_short_and_maximum_frames() {
+    for (size_t size : {size_t(19), size_t(137), size_t(139), size_t(255)}) {
+        installPair();
+        auto frame = response(7);
+        frame.resize(size, 0xA5);
+        frame[0] = size;
+        frame[16] = 0x42; // Nonzero status is reported, not a reason to discard bytes.
+        const auto crc = radian_crc_kermit(frame.data(), size - 2);
+        frame[size - 2] = crc >> 8; frame.back() = crc;
+        replies = {oversample(frame)};
+        std::string log;
+        NativeSerial::capture() = &log;
+        const bool ok = capture_predefined_frame_for_meter(21, 123456, 0);
+        NativeSerial::capture() = nullptr;
+        TEST_ASSERT_TRUE_MESSAGE(ok, log.c_str());
+        TEST_ASSERT_NOT_NULL(strstr(log.c_str(), "CRC=OK address=OK control=OK byte16=0x42"));
+        char finalLine[32];
+        snprintf(finalLine, sizeof(finalLine), "[%03u]", unsigned((size - 1) / 16 * 16));
+        TEST_ASSERT_NOT_NULL(strstr(log.c_str(), finalLine));
+        std::vector<uint8_t> decoded;
+        std::istringstream lines(log);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.find("[CAPTURE] Response [") == std::string::npos) continue;
+            std::istringstream hex(line.substr(line.find("]: ") + 3));
+            unsigned value;
+            while (hex >> std::hex >> value) decoded.push_back(value);
+        }
+        TEST_ASSERT_EQUAL_size_t(frame.size(), decoded.size());
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(frame.data(), decoded.data(), frame.size());
+        TEST_ASSERT_NOT_NULL(strstr(log.c_str(), "RX oversampled [0000]"));
+        TEST_ASSERT_EQUAL_UINT(1, exchanges);
+        uint8_t raw[29], encoded[64], ats[7]{};
+        radian_build_predefined_request(raw, sizeof(raw), 21, 123456, ats, 0, 0);
+        const auto encodedSize = encode_radian_request(raw, sizeof(raw), encoded, sizeof(encoded));
+        TEST_ASSERT_EQUAL_size_t(encodedSize, requests[0].size());
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(encoded, requests[0].data(), encodedSize);
+    }
+}
+
+void test_predefined_capture_reports_invalid_and_partial_responses() {
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        installPair();
+        auto frame = response(7, failure == 1 ? 22 : 21);
+        if (failure == 0) frame[50] ^= 1;
+        if (failure == 2) frame.resize(35);
+        replies = {failure == 3 ? std::vector<uint8_t>{} : oversample(frame)};
+        std::string log;
+        NativeSerial::capture() = &log;
+        const bool ok = capture_predefined_frame_for_meter(21, 123456, 10);
+        NativeSerial::capture() = nullptr;
+        TEST_ASSERT_FALSE(ok);
+        const char *expected[] = {"CRC=BAD", "address=BAD", "length=PARTIAL", "decoded=0"};
+        TEST_ASSERT_NOT_NULL_MESSAGE(strstr(log.c_str(), expected[failure]), log.c_str());
+        TEST_ASSERT_EQUAL_UINT(1, exchanges);
+    }
+    installPair();
+    const auto transfers = nativeCC1101().transfers;
+    TEST_ASSERT_FALSE(capture_predefined_frame_for_meter(21, 123456, 11));
+    TEST_ASSERT_EQUAL_UINT32(transfers, nativeCC1101().transfers);
 }

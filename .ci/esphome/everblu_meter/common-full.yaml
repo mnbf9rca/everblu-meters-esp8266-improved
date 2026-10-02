@@ -119,6 +119,8 @@ everblu_meter:
     name: "CI Radio Connected"
 
   # --- Buttons (all of them) ---
+  request_predefined_capture_button:
+    name: Capture Predefined Frames
   request_reading_button:
     name: "CI Read Now"
   request_full_fdr_button:

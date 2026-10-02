@@ -32,6 +32,7 @@ static const unsigned long RETRY_DELAY_MS = 5000;
 // Publishing can invoke user automations synchronously. Keep every reader off
 // the shared radio/archive until the FDR operation and its callbacks return.
 static bool s_fdrInProgress = false;
+static MeterReader *s_captureReader = nullptr;
 
 // Produce a concise, MQTT-style summary of the latest reading for ESPHome logs
 static void logReadableSummary(const tmeter_data &data, const IConfigProvider *config)
@@ -198,6 +199,11 @@ void MeterReader::begin()
 
 void MeterReader::loop()
 {
+    if (s_captureReader)
+    {
+        if (s_captureReader == this) stepPredefinedCapture();
+        return;
+    }
     if (s_fdrInProgress) return;
     if (!m_initialized)
         return;
@@ -391,7 +397,7 @@ bool MeterReader::shouldPerformScheduledRead()
 
 void MeterReader::triggerReading(bool isScheduled)
 {
-    if (s_fdrInProgress) return;
+    if (s_fdrInProgress || s_captureReader) return;
     if (!m_initialized) return;
     if (m_readingInProgress)
     {
@@ -614,6 +620,14 @@ void MeterReader::resetRetryState()
 
 void MeterReader::stopReading()
 {
+    if (s_captureReader)
+    {
+        if (s_captureReader == this)
+        {
+            finishPredefinedCapture("Predefined capture stopped");
+        }
+        return;
+    }
     if (s_fdrInProgress) return;
     // One CC1101 is shared, but each meter has its own Stop button. Only the meter
     // that started a scan can cancel it, so tell the user which button to press
@@ -659,7 +673,7 @@ void MeterReader::stopReading()
 
 void MeterReader::performFrequencyScan(bool deep)
 {
-    if (s_fdrInProgress) return;
+    if (s_fdrInProgress || s_captureReader) return;
     if (FrequencyManager::isScanInProgress() || m_readingInProgress || !m_initialized)
     {
         LOG_W("everblu_meter", "Frequency scan already running - ignoring request");
@@ -689,7 +703,7 @@ void MeterReader::performFrequencyScan(bool deep)
 
 void MeterReader::resetFrequencyOffset()
 {
-    if (s_fdrInProgress) return;
+    if (s_fdrInProgress || s_captureReader) return;
     if (FrequencyManager::isScanInProgress() || m_readingInProgress || !m_initialized) return;
     if (!activateCallbackContext()) return;
 
@@ -781,7 +795,7 @@ bool MeterReader::isReadingDayForConfiguredSchedule(const struct tm *ptm) const
 
 bool MeterReader::isFullFdrInProgress()
 {
-    return s_fdrInProgress;
+    return s_fdrInProgress || s_captureReader;
 }
 
 bool MeterReader::readFullFdr()
@@ -806,7 +820,7 @@ bool MeterReader::readFullFdr()
         return reject("Full FDR rejected: publisher unavailable");
     if (!m_publisher->isReady())
         return reject("Full FDR rejected: publisher not ready");
-    if (s_fdrInProgress || m_readingInProgress || m_retryCount > 0 || m_nextRetryTime > 0 ||
+    if (s_fdrInProgress || s_captureReader || m_readingInProgress || m_retryCount > 0 || m_nextRetryTime > 0 ||
         FrequencyManager::isScanInProgress())
         return reject("Full FDR rejected: radio busy or retry pending");
     if (m_config->isMeterGas())
@@ -872,4 +886,57 @@ bool MeterReader::readFullFdr()
     completeReading(error ? error : "Full FDR captured");
     s_fdrInProgress = false;
     return error == nullptr;
+}
+
+bool MeterReader::startPredefinedCapture()
+{
+    if (!m_initialized || !m_publisher || !m_publisher->isReady() || m_config->isMeterGas() ||
+        s_fdrInProgress || s_captureReader || m_readingInProgress || m_retryCount > 0 ||
+        m_nextRetryTime > 0 || FrequencyManager::isScanInProgress())
+    {
+        LOG_W("everblu_meter", "Predefined capture rejected: water meter must be ready and radio idle");
+        return false;
+    }
+    s_captureReader = this;
+    m_readingInProgress = true;
+    m_captureSelector = m_captureValidated = 0;
+    m_captureStepAt = uint32_t(millis()) - 1000;
+    m_publisher->publishActiveReading(true);
+    if (s_captureReader != this) return false;
+    m_publisher->publishRadioState("Capturing predefined frames");
+    if (s_captureReader != this) return false;
+    LOG_W("everblu_meter", "[CAPTURE] Private raw capture: may contain meter identity, access code and consumption");
+    LOG_I("everblu_meter", "[CAPTURE] Reading selectors 0..10 once each; Stop Reading cancels between frames");
+    return true;
+}
+
+void MeterReader::stepPredefinedCapture()
+{
+    // Return to the host between exchanges so logs and Stop requests can drain.
+    if (uint32_t(millis() - m_captureStepAt) < 1000) return;
+    if (!activateCallbackContext() || (m_captureSelector == 0 && !radioInitCallback(getTunedFrequency())))
+    {
+        finishPredefinedCapture("Predefined capture failed: radio unavailable");
+        return;
+    }
+    if (capture_predefined_frame_for_meter(m_config->getMeterYear(), m_config->getMeterSerial(), m_captureSelector))
+        ++m_captureValidated;
+    m_captureStepAt = millis();
+    if (++m_captureSelector > 10)
+    {
+        char status[80];
+        snprintf(status, sizeof(status), "Predefined capture complete: %u/11 frames validated", m_captureValidated);
+        finishPredefinedCapture(status);
+    }
+}
+
+void MeterReader::finishPredefinedCapture(const char *status)
+{
+    // Status automations may press Stop synchronously during completion.
+    static bool publishing = false;
+    if (publishing) return;
+    publishing = true;
+    completeReading(status);
+    s_captureReader = nullptr;
+    publishing = false;
 }
