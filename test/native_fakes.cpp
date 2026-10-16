@@ -58,6 +58,8 @@ tmeter_data FakeRadio::success(int volume, int8_t freqest)
     data.rssi_dbm = -70;
     data.lqi = 20;
     data.freqest = freqest;
+    data.signal_valid = true;
+    data.lqi_valid = true;
     data.history_available = false;
     data.failure = ReadFailure::None;
     return data;
@@ -348,6 +350,7 @@ void RecordingPublisher::reset()
 {
     ready = true;
     readings.clear();
+    diagnostics.clear();
     statuses.clear();
     radioStates.clear();
     errors.clear();
@@ -434,7 +437,10 @@ void RecordingPublisher::publishTunedFrequency(float frequencyMHz)
     tunedFrequencies.push_back(frequencyMHz);
 }
 
-void RecordingPublisher::publishFrequencyEstimate(int8_t) {}
+void RecordingPublisher::publishRadioDiagnostics(const tmeter_data &data)
+{
+    diagnostics.push_back(data);
+}
 void RecordingPublisher::publishUptime(unsigned long, const char *) {}
 void RecordingPublisher::publishFirmwareVersion(const char *) {}
 void RecordingPublisher::publishDiscovery() { discoveryPublishes++; }

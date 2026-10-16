@@ -435,15 +435,18 @@ void MeterReader::performReading()
           m_totalReadAttempts, m_retryCount, m_config->getMaxRetries(),
           currentFreq, currentOffset * 1000.0);
 
-    // Perform actual meter read
-    if (!radioInitCallback(getTunedFrequency()))
-    {
-        m_radioConnected = false;
-        handleFailedRead(ReadFailure::NotAttempted);
-        return;
-    }
-    m_radioConnected = true;
-    struct tmeter_data meter_data = meterReadCallback();
+    // Keep diagnostics fresh even when initialization fails before reception.
+    struct tmeter_data meter_data{};
+    m_radioConnected = radioInitCallback(currentFreq);
+    if (m_radioConnected)
+        meter_data = meterReadCallback();
+    else
+        meter_data.failure = ReadFailure::NotAttempted;
+
+    m_publisher->publishRadioDiagnostics(meter_data);
+    m_publisher->publishStatistics(m_totalReadAttempts, m_successfulReads, m_failedReads);
+    m_publisher->publishFrequencyOffset(currentOffset);
+    m_publisher->publishTunedFrequency(currentFreq);
 
     // Validate data
     if (meter_data.reads_counter == 0 || meter_data.volume == 0)

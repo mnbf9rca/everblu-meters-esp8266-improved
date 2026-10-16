@@ -12,6 +12,12 @@ Releases are created manually by tagging commits with version tags matching `v*.
 - Keep PR coverage explicit per release so branch-only work is auditable against merge history.
 - Add new versions below, not above this section.
 
+## [Unreleased]
+
+### Fixed
+
+- Radio diagnostics now update on failed reads and retries; missing measurements clear to unknown (retained `None` on standalone MQTT). See the [README](README.md#radio-diagnostics-after-a-failed-read) for ESPHome MQTT configuration. Meter data and adaptive tracking remain success-only.
+
 ## [v3.6.0] - 2026-09-16
 
 ### AI Metadata

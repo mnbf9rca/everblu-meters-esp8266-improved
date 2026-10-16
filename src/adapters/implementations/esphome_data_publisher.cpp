@@ -9,6 +9,7 @@
 // no ESPHome dependency, and this translation unit is compiled by the MQTT build
 // too, where guarding it would leave the helpers below returning a constant.
 #include "../../core/utils.h"
+#include <cmath>
 
 #ifdef USE_ESPHOME
 #include "esphome/components/sensor/sensor.h"
@@ -49,27 +50,6 @@ void ESPHomeDataPublisher::publishMeterReading(const tmeter_data &data, const ch
         counter_sensor_->publish_state(data.reads_counter);
     }
 
-    // Signal quality metrics
-    if (rssi_sensor_)
-    {
-        rssi_sensor_->publish_state(data.rssi_dbm);
-    }
-
-    if (rssi_percentage_sensor_)
-    {
-        rssi_percentage_sensor_->publish_state(calculateRssiPercentage(data.rssi_dbm));
-    }
-
-    if (lqi_sensor_)
-    {
-        lqi_sensor_->publish_state(data.lqi);
-    }
-
-    if (lqi_percentage_sensor_)
-    {
-        lqi_percentage_sensor_->publish_state(calculateLqiPercentage(data.lqi));
-    }
-
     // Wake window times (formatted as HH:MM)
     if (time_start_sensor_)
     {
@@ -101,12 +81,6 @@ void ESPHomeDataPublisher::publishMeterReading(const tmeter_data &data, const ch
     if (meter_model_sensor_ && data.meter_type[0] != '\0')
     {
         meter_model_sensor_->publish_state(data.meter_type);
-    }
-
-    // Frequency estimate from CC1101
-    if (frequency_estimate_sensor_)
-    {
-        publishFrequencyEstimate(data.freqest);
     }
 #endif
 }
@@ -340,17 +314,19 @@ void ESPHomeDataPublisher::publishTunedFrequency(float frequencyMHz)
 #endif
 }
 
-void ESPHomeDataPublisher::publishFrequencyEstimate(int8_t freqestValue)
+void ESPHomeDataPublisher::publishRadioDiagnostics(const tmeter_data &data)
 {
 #ifdef USE_ESPHOME
+    if (rssi_sensor_)
+        rssi_sensor_->publish_state(data.signal_valid ? data.rssi_dbm : NAN);
+    if (rssi_percentage_sensor_)
+        rssi_percentage_sensor_->publish_state(data.signal_valid ? calculateRssiPercentage(data.rssi_dbm) : NAN);
+    if (lqi_sensor_)
+        lqi_sensor_->publish_state(data.lqi_valid ? data.lqi : NAN);
+    if (lqi_percentage_sensor_)
+        lqi_percentage_sensor_->publish_state(data.lqi_valid ? calculateLqiPercentage(data.lqi) : NAN);
     if (frequency_estimate_sensor_)
-    {
-        // Convert FREQEST raw value to kHz (approximately 1.59 kHz per LSB with 26 MHz crystal)
-        constexpr float FREQEST_TO_KHZ = 1.587; // ~1.59 kHz per LSB
-        float freqestKHz = (float)freqestValue * FREQEST_TO_KHZ;
-        ESP_LOGD(TAG_PUB, "Publishing frequency estimate: %d (%.3f kHz)", freqestValue, freqestKHz);
-        frequency_estimate_sensor_->publish_state(freqestKHz);
-    }
+        frequency_estimate_sensor_->publish_state(data.signal_valid ? data.freqest * 1.587f : NAN);
 #endif
 }
 

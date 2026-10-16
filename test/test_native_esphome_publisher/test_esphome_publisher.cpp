@@ -11,6 +11,7 @@
 #include <unity.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -130,6 +131,8 @@ namespace
         data.rssi_dbm = -70;
         data.lqi = 25;
         data.freqest = 12;
+        data.signal_valid = true;
+        data.lqi_valid = true;
         data.history_available = false;
         data.failure = ReadFailure::None;
         return data;
@@ -159,8 +162,6 @@ void test_pub_reading_populates_every_sensor(void)
     TEST_ASSERT_EQUAL_FLOAT(123456.0f, g_sensors.volume.last());
     TEST_ASSERT_EQUAL_FLOAT(118.0f, g_sensors.battery.last());
     TEST_ASSERT_EQUAL_FLOAT(77.0f, g_sensors.counter.last());
-    TEST_ASSERT_EQUAL_FLOAT(-70.0f, g_sensors.rssi.last());
-    TEST_ASSERT_EQUAL_FLOAT(25.0f, g_sensors.lqi.last());
     TEST_ASSERT_EQUAL_STRING("08:00", g_sensors.timeStart.last());
     TEST_ASSERT_EQUAL_STRING("18:00", g_sensors.timeEnd.last());
     TEST_ASSERT_EQUAL_STRING("2026-04-27T09:59:49Z", g_sensors.timestamp.last());
@@ -207,11 +208,11 @@ void test_pub_reading_publishes_meter_clock_and_model_when_present(void)
     TEST_ASSERT_EQUAL_STRING("133290AL02", g_sensors.meterModel.last());
 }
 
-void test_pub_reading_publishes_frequency_estimate_in_khz(void)
+void test_pub_diagnostics_publish_frequency_estimate_in_khz(void)
 {
     tmeter_data data = sampleReading();
     data.freqest = 12;
-    publisher().publishMeterReading(data, "t");
+    publisher().publishRadioDiagnostics(data);
 
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 12 * 1.587f, g_sensors.frequencyEstimate.last());
 }
@@ -221,6 +222,7 @@ void test_pub_reading_without_sensors_is_safe(void)
     // A YAML config that declares no sensors at all must not crash the device.
     ESPHomeDataPublisher bare;
     bare.publishMeterReading(sampleReading(), "t");
+    bare.publishRadioDiagnostics(sampleReading());
     bare.publishStatusMessage("Ready");
     bare.publishError("None");
     bare.publishActiveReading(true);
@@ -243,7 +245,7 @@ void test_pub_lqi_percentage_matches_the_shared_helper(void)
         tmeter_data data = sampleReading();
         data.lqi = lqi;
         g_sensors.lqiPercent.clear();
-        publisher().publishMeterReading(data, "t");
+        publisher().publishRadioDiagnostics(data);
 
         TEST_ASSERT_EQUAL_FLOAT((float)calculateLQIToPercentage(lqi),
                                 g_sensors.lqiPercent.last());
@@ -254,7 +256,7 @@ void test_pub_lqi_percentage_masks_the_crc_ok_bit(void)
 {
     tmeter_data data = sampleReading();
     data.lqi = 0x80 | 25; // CRC_OK set alongside an error count of 25
-    publisher().publishMeterReading(data, "t");
+    publisher().publishRadioDiagnostics(data);
 
     TEST_ASSERT_EQUAL_FLOAT((float)calculateLQIToPercentage(25), g_sensors.lqiPercent.last());
 }
@@ -267,7 +269,7 @@ void test_pub_rssi_percentage_matches_the_shared_helper(void)
         tmeter_data data = sampleReading();
         data.rssi_dbm = dbm;
         g_sensors.rssiPercent.clear();
-        publisher().publishMeterReading(data, "t");
+        publisher().publishRadioDiagnostics(data);
 
         TEST_ASSERT_EQUAL_FLOAT((float)calculateMeterdBmToPercentage(dbm),
                                 g_sensors.rssiPercent.last());
@@ -282,7 +284,7 @@ void test_pub_rssi_percentage_is_clamped_to_0_100(void)
         tmeter_data data = sampleReading();
         data.rssi_dbm = dbm;
         g_sensors.rssiPercent.clear();
-        publisher().publishMeterReading(data, "t");
+        publisher().publishRadioDiagnostics(data);
 
         const float percent = g_sensors.rssiPercent.last();
         TEST_ASSERT_TRUE(percent >= 0.0f && percent <= 100.0f);
@@ -429,7 +431,9 @@ void test_pub_tuned_frequency_is_published_in_mhz(void)
 
 void test_pub_negative_frequency_estimate_is_signed(void)
 {
-    publisher().publishFrequencyEstimate(-40);
+    tmeter_data data = sampleReading();
+    data.freqest = -40;
+    publisher().publishRadioDiagnostics(data);
 
     TEST_ASSERT_FLOAT_WITHIN(0.001f, -40 * 1.587f, g_sensors.frequencyEstimate.last());
 }
@@ -555,4 +559,70 @@ void test_echo_debug_routes_through_the_esphome_logger(void)
     TEST_ASSERT_TRUE(captured.find("suppressed") == std::string::npos);
     // One log record, so the newline inside the message was removed.
     TEST_ASSERT_EQUAL(1, (int)std::count(captured.begin(), captured.end(), '\n'));
+}
+
+void test_pub_reading_does_not_publish_radio_diagnostics(void)
+{
+    publisher().publishMeterReading(sampleReading(), "t");
+    TEST_ASSERT_FALSE(g_sensors.rssi.published());
+    TEST_ASSERT_FALSE(g_sensors.rssiPercent.published());
+    TEST_ASSERT_FALSE(g_sensors.lqi.published());
+    TEST_ASSERT_FALSE(g_sensors.lqiPercent.published());
+    TEST_ASSERT_FALSE(g_sensors.frequencyEstimate.published());
+}
+
+void test_pub_failed_diagnostics_clear_missing_metrics_without_changing_meter_data(void)
+{
+    tmeter_data good = sampleReading();
+    snprintf(good.meter_time, sizeof(good.meter_time), "2026-04-27 09:59:49");
+    publisher().publishMeterReading(good, "last success");
+    publisher().publishHistory(good.history, false);
+    publisher().publishRadioDiagnostics(good);
+    TEST_ASSERT_EQUAL_FLOAT(-70, g_sensors.rssi.last());
+    TEST_ASSERT_EQUAL_FLOAT(25, g_sensors.lqi.last());
+
+    tmeter_data partial{};
+    partial.failure = ReadFailure::NoReply;
+    partial.signal_valid = true;
+    partial.rssi_dbm = -130;
+    partial.freqest = -40;
+    publisher().publishRadioDiagnostics(partial);
+    TEST_ASSERT_EQUAL_FLOAT(-130, g_sensors.rssi.last());
+    TEST_ASSERT_EQUAL_FLOAT(0, g_sensors.rssiPercent.last());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -40 * 1.587f, g_sensors.frequencyEstimate.last());
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.lqi.last()));
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.lqiPercent.last()));
+
+    publisher().publishRadioDiagnostics(tmeter_data{});
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.rssi.last()));
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.rssiPercent.last()));
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.frequencyEstimate.last()));
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.lqi.last()));
+    TEST_ASSERT_TRUE(std::isnan(g_sensors.lqiPercent.last()));
+    TEST_ASSERT_EQUAL(3, g_sensors.rssi.count());
+    TEST_ASSERT_EQUAL(3, g_sensors.frequencyEstimate.count());
+    TEST_ASSERT_EQUAL(1, g_sensors.volume.count());
+    TEST_ASSERT_EQUAL(1, g_sensors.battery.count());
+    TEST_ASSERT_EQUAL(1, g_sensors.counter.count());
+    TEST_ASSERT_EQUAL(1, g_sensors.timestamp.count());
+    TEST_ASSERT_EQUAL_STRING("last success", g_sensors.timestamp.last());
+    TEST_ASSERT_EQUAL(1, g_sensors.meterClock.count());
+    TEST_ASSERT_EQUAL(1, g_sensors.history.count());
+}
+
+void test_pub_radio_diagnostics_are_per_meter(void)
+{
+    ESPHomeDataPublisher second;
+    Sensor rssi, lqi, freqest;
+    second.set_rssi_sensor(&rssi);
+    second.set_lqi_sensor(&lqi);
+    second.set_frequency_estimate_sensor(&freqest);
+    publisher().publishRadioDiagnostics(sampleReading());
+    second.publishRadioDiagnostics(tmeter_data{});
+    TEST_ASSERT_TRUE(std::isnan(rssi.last()));
+    TEST_ASSERT_TRUE(std::isnan(lqi.last()));
+    TEST_ASSERT_TRUE(std::isnan(freqest.last()));
+    TEST_ASSERT_EQUAL_FLOAT(-70, g_sensors.rssi.last());
+    TEST_ASSERT_EQUAL_FLOAT(25, g_sensors.lqi.last());
+    TEST_ASSERT_EQUAL(1, g_sensors.frequencyEstimate.count());
 }

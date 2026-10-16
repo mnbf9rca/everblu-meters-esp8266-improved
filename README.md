@@ -54,6 +54,7 @@ Two independent deployment targets share the same core radio/protocol logic:
 - [Hardware](#hardware)
   - [Connections (ESP32/ESP8266 to CC1101)](#connections-esp32esp8266-to-cc1101)
   - [CC1101](#cc1101)
+- [Radio diagnostics after a failed read](#radio-diagnostics-after-a-failed-read)
 - [MQTT Integration](#mqtt-integration)
 - [Multiple Devices](#multiple-devices)
 - [Home Assistant Best Practice: Utility Meter Helper](#home-assistant-best-practice-utility-meter-helper)
@@ -501,6 +502,19 @@ Some modules are not labelled on the PCB. Below is the pinout for one:
 
 ---
 
+## Radio diagnostics after a failed read
+
+RSSI, LQI, their percentages and frequency estimate describe the latest normal read attempt, including each retry and corrupt response. A partial reply can provide RSSI and frequency error even when the read times out; LQI is only available after enough payload has arrived. These receiver measurements do not identify the transmitter or prove that a valid meter reply was received. Frequency scan probes do not update these sensors.
+
+An attempt without a measurement clears that sensor to unknown instead of leaving the previous value. Standalone MQTT publishes retained `None` on each missing diagnostic topic. ESPHome publishes NaN, which the native API exposes as unknown. If you use ESPHome's MQTT transport, add this to your existing `mqtt:` configuration so Home Assistant also receives unknown values:
+
+```yaml
+mqtt:
+  publish_nan_as_none: true
+```
+
+Failed attempts do not publish fresh consumption, battery, counter, meter clock, history or successful-reading timestamp values. Adaptive frequency tracking continues to use successful reads only.
+
 ## MQTT Integration
 
 In standalone mode, the firmware integrates with Home Assistant through MQTT AutoDiscovery, so entities appear automatically once the device connects to your broker.
@@ -517,7 +531,7 @@ The following MQTT topics are used to integrate the device with Home Assistant v
 | `Liters`     | `liters`          | Total usage in litres, or m³ for a gas meter.               |
 | `Battery`    | `battery`         | Remaining battery life in months.                           |
 | `Counter`    | `counter`         | Times the meter has been read (wraps around 255→1).         |
-| `RSSI (dBm)` | `rssi_dbm`        | Signal strength of the meter's reply, in dBm.               |
+| `RSSI (dBm)` | `rssi_dbm`        | Received signal strength on the latest attempt, in dBm.     |
 | `RSSI (%)`   | `rssi_percentage` | The same value as a percentage. See the note below.         |
 | `LQI`        | `lqi`             | Raw link quality indicator (0-127, lower is better).        |
 | `LQI (%)`    | `lqi_percentage`  | Link quality inverted so that higher is better.             |
@@ -542,7 +556,7 @@ Two further topics carry no entity of their own: `liters_attributes` holds the p
 | `Failed Reads`       | `failed_reads`            | Reads that exhausted every retry.                           |
 | `Frequency Offset`   | `frequency_offset`        | Stored calibration offset, in kHz.                          |
 | `Tuned Frequency`    | `tuned_frequency`         | Frequency the radio is actually tuned to, in MHz.           |
-| `Frequency Estimate` | `frequency_estimate`      | CC1101 FREQEST reading from the last frame, in kHz.         |
+| `Frequency Estimate` | `frequency_estimate`      | CC1101 FREQEST from the latest attempt, in kHz, or unknown. |
 | `Diagnostic Report`  | `diagnostic_report_state` | Last diagnostic report. See the command topics below.       |
 | `Meter Year`         | `everblu_meter_year`      | Production year parsed from `METER_CODE`.                   |
 | `Meter Serial`       | `everblu_meter_serial`    | Serial number parsed from `METER_CODE`.                     |

@@ -58,6 +58,11 @@ void test_every_recorded_capture_replays_through_the_radio(void);
 void test_receive_recovers_a_radio_that_ignores_the_first_rx_strobe(void);
 void test_receive_gives_up_on_a_radio_that_never_enters_rx(void);
 
+void test_read_captures_diagnostics_before_receive_cleanup(void);
+
+void test_read_diagnostics_do_not_leak_between_attempts(void);
+void test_read_diagnostics_ignore_ack_and_handle_partial_data(void);
+
 void setUp(void)
 {
     nativePinReset();
@@ -121,6 +126,11 @@ int main(int, char **)
     RUN_TEST(test_every_recorded_capture_replays_through_the_radio);
     RUN_TEST(test_receive_recovers_a_radio_that_ignores_the_first_rx_strobe);
     RUN_TEST(test_receive_gives_up_on_a_radio_that_never_enters_rx);
+
+    RUN_TEST(test_read_captures_diagnostics_before_receive_cleanup);
+
+    RUN_TEST(test_read_diagnostics_do_not_leak_between_attempts);
+    RUN_TEST(test_read_diagnostics_ignore_ack_and_handle_partial_data);
 
     return UNITY_END();
 }

@@ -38,6 +38,9 @@ public:
      */
     virtual void publishMeterReading(const tmeter_data &data, const char *timestamp) = 0;
 
+    /** Publish the latest attempt's radio measurements, clearing unavailable values. */
+    virtual void publishRadioDiagnostics(const tmeter_data &data) = 0;
+
     /**
      * @brief Publish meter historical data
      * @param history Array of 13 monthly readings
@@ -113,12 +116,6 @@ public:
      * @param frequencyMHz Actual tuned frequency in MHz with offset applied
      */
     virtual void publishTunedFrequency(float frequencyMHz) = 0;
-
-    /**
-     * @brief Publish frequency estimate from CC1101
-     * @param freqestValue Raw FREQEST value from meter reading (-128 to +127)
-     */
-    virtual void publishFrequencyEstimate(int8_t freqestValue) = 0;
 
     /**
      * @brief Publish uptime
