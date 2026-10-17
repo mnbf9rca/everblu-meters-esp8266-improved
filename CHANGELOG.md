@@ -27,6 +27,13 @@ Releases are created manually by tagging commits with version tags matching `v*.
 ### Fixed
 
 - Restore ESPHome 2026.1/2026.2 compilation by using the API state-subscription query available before 2026.3. Home Assistant readiness still requires a state subscription, not just an API connection.
+- Skip Codecov uploads when no token is configured; expose the token only to the upload action.
+- Test the current repository and branch in the ESPHome git smoke test, including forks.
+- Make the component release script work with macOS sed and ignore its Python cache placeholder.
+
+### Changed
+
+- Update `softprops/action-gh-release` to v3.0.3, pinned to its commit SHA.
 
 ## [v3.6.0] - 2026-09-16
 
