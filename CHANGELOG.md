@@ -24,6 +24,10 @@ Releases are created manually by tagging commits with version tags matching `v*.
   monthly operation is hardware-tested, with synthetic tests for other periods.
   Normal readings and history are unchanged. See [Full FDR setup](docs/full-fdr.md).
 
+### Fixed
+
+- Restore ESPHome 2026.1/2026.2 compilation by using the API state-subscription query available before 2026.3. Home Assistant readiness still requires a state subscription, not just an API connection.
+
 ## [v3.6.0] - 2026-09-16
 
 ### AI Metadata
