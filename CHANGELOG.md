@@ -26,6 +26,7 @@ Releases are created manually by tagging commits with version tags matching `v*.
 
 ### Fixed
 
+- Radio diagnostics now update on failed reads and retries; missing measurements clear to unknown (retained `None` on standalone MQTT). See the [README](README.md#radio-diagnostics-after-a-failed-read) for ESPHome MQTT configuration. Meter data and adaptive tracking remain success-only.
 - Restore ESPHome 2026.1/2026.2 compilation by using the API state-subscription query available before 2026.3. Home Assistant readiness still requires a state subscription, not just an API connection.
 - Skip Codecov uploads when no token is configured; expose the token only to the upload action.
 - Test the current repository and branch in the ESPHome git smoke test, including forks.

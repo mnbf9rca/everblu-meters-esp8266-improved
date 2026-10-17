@@ -1550,6 +1550,15 @@ uint8_t decode_4bitpbit_serial(uint8_t *rxBuffer, int l_total_byte, uint8_t *dec
   return dest_byte_cnt;
 }
 
+struct RadioDiagnostics
+{
+  uint8_t rssi;
+  uint8_t lqi;
+  int8_t freqest;
+  bool signal_valid;
+  bool lqi_valid;
+};
+
 /*
    Function: receive_radian_frame
    Description: Receives a RADIAN protocol frame using a two-stage sync detection approach.
@@ -1639,8 +1648,9 @@ uint8_t decode_4bitpbit_serial(uint8_t *rxBuffer, int l_total_byte, uint8_t *dec
    Note: The received data is 4x larger than the decoded size due to oversampling
    and needs to be processed by decode_4bitpbit_serial() to extract actual data.
 */
-int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rxBuffer_size, int8_t *frequency_estimate = nullptr)
+int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rxBuffer_size, RadioDiagnostics *diagnostics = nullptr)
 {
+  if (diagnostics != nullptr) *diagnostics = {};
   uint8_t l_byte_in_rx = 0;
   uint16_t l_total_byte = 0;
   // On-air framing per byte is 1 start + 8 data + 3 stop = 12 bits (see
@@ -1718,8 +1728,14 @@ int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rx
 
   l_lqi = halRfReadReg(LQI_ADDR);
   l_freq_est = halRfReadReg(FREQEST_ADDR);
-  if (frequency_estimate != nullptr) *frequency_estimate = (int8_t)l_freq_est;
-  l_Rssi_dbm = cc1100_rssi_convert2dbm(halRfReadReg(RSSI_ADDR));
+  uint8_t rssi = halRfReadReg(RSSI_ADDR);
+  if (diagnostics != nullptr)
+  {
+    diagnostics->rssi = rssi;
+    diagnostics->freqest = (int8_t)l_freq_est;
+    diagnostics->signal_valid = true;
+  }
+  l_Rssi_dbm = cc1100_rssi_convert2dbm(rssi);
   echo_debug(debug_out, "[CC1101] rssi=%d lqi=%u F_est=%d\n", l_Rssi_dbm, l_lqi & 0x7F, (int8_t)l_freq_est);
 
   fflush(stdout);
@@ -1820,6 +1836,16 @@ int receive_radian_frame(int size_byte, int rx_tmo_ms, uint8_t *rxBuffer, int rx
         l_total_byte += l_byte_in_rx;
       }
     }
+  }
+
+  // Snapshot before timeout handling or FIFO cleanup can discard these measurements.
+  if (diagnostics != nullptr)
+  {
+    diagnostics->rssi = halRfReadReg(RSSI_ADDR);
+    // LQI estimates the first 64 symbols after sync (8 bytes at 2-FSK).
+    diagnostics->lqi_valid = l_total_byte >= 8;
+    if (diagnostics->lqi_valid)
+      diagnostics->lqi = halRfReadReg(LQI_ADDR) & 0x7F;
   }
 
   if (l_tmo < rx_tmo_ms && l_total_byte > 0)
@@ -1933,9 +1959,10 @@ static uint8_t meter_data[300];
 // Shared wake-up / interrogation / ACK / data exchange. The caller supplies a
 // decoded buffer of at least 200 bytes (the decoder's existing bounded limit).
 static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t response_size,
-                                   uint8_t *decoded_buffer, bool *frame_received = nullptr, int8_t *frequency_estimate = nullptr)
+                                   uint8_t *decoded_buffer, bool *frame_received = nullptr, RadioDiagnostics *diagnostics = nullptr)
 {
   if (frame_received) *frame_received = false;
+  if (diagnostics) *diagnostics = {};
   if (!tx_size || tx_size > 64) return 0;
   uint8_t marcstate = 0xFF;
   uint8_t wupbuffer[] = {0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55};
@@ -2245,7 +2272,7 @@ static int exchange_radian_request(uint8_t *txbuffer, size_t tx_size, size_t res
   // delay(30); //50ms de 111111  , mais on a 7+3ms de printf et xxms calculs
   /*34ms 0101...01  14.25ms 000...000  14ms 1111...11111  582ms de data avec l'index */
   echo_debug(1, "[METER] Waiting for data frame (%u-byte frame, 1000ms timeout)...\n", (unsigned)response_size);
-  rxBuffer_size = receive_radian_frame(response_size, 1000, rxBuffer, sizeof(rxBuffer), frequency_estimate);
+  rxBuffer_size = receive_radian_frame(response_size, 1000, rxBuffer, sizeof(rxBuffer), diagnostics);
   if (rxBuffer_size)
   {
     echo_debug(1, "[METER] Data frame received - decoding %d raw bytes...\n", rxBuffer_size);
@@ -2273,8 +2300,8 @@ struct tmeter_data get_meter_data_for_meter(uint8_t meter_year, uint32_t meter_s
   uint8_t txbuffer[100];
   const size_t tx_size = Make_Radian_Master_req(txbuffer, meter_year, meter_serial);
   bool frame_received = false;
-  int8_t data_frequency_estimate = 0;
-  int meter_data_size = exchange_radian_request(txbuffer, tx_size, 124, meter_data, &frame_received, &data_frequency_estimate);
+  RadioDiagnostics diagnostics = {};
+  int meter_data_size = exchange_radian_request(txbuffer, tx_size, 124, meter_data, &frame_received, &diagnostics);
   if (frame_received)
   {
     // If debug enabled, print the decoded (post-serial-decoding) meter data so we can inspect fields (timestamp etc.)
@@ -2314,9 +2341,7 @@ struct tmeter_data get_meter_data_for_meter(uint8_t meter_year, uint32_t meter_s
       crc_boundary_search(meter_data, meter_data_size);
 
     echo_debug(1, "[METER] Validating CRC...\n");
-    // Read RSSI now while the channel is still active so we can use it to
-    // diagnose the cause of a CRC failure (saturation vs. weak signal).
-    int frame_rssi_dbm = cc1100_rssi_convert2dbm(halRfReadReg(RSSI_ADDR));
+    int frame_rssi_dbm = cc1100_rssi_convert2dbm(diagnostics.rssi);
     if (validate_radian_crc(meter_data, meter_data_size))
     {
       echo_debug(1, "[METER] CRC valid - parsing meter data\n");
@@ -2355,10 +2380,13 @@ struct tmeter_data get_meter_data_for_meter(uint8_t meter_year, uint32_t meter_s
     echo_debug(debug_out, "[METER] Meter data frame timeout\n");
     sdata.failure = ReadFailure::NoReply;
   }
-  sdata.rssi = halRfReadReg(RSSI_ADDR);                              // Read RSSI value from CC1101
-  sdata.rssi_dbm = cc1100_rssi_convert2dbm(halRfReadReg(RSSI_ADDR)); // Read RSSI value from CC1101 and convert to dBm
-  sdata.lqi = halRfReadReg(LQI_ADDR) & 0x7F;                         // Read LQI value from CC1101 (mask bit 7 = CRC_OK; bits 6:0 are the LQI)
-  sdata.freqest = data_frequency_estimate;
+  // Parsing replaces sdata, so attach the receive snapshot on both success and failure.
+  sdata.signal_valid = diagnostics.signal_valid;
+  sdata.lqi_valid = diagnostics.lqi_valid;
+  sdata.rssi = diagnostics.rssi;
+  sdata.rssi_dbm = diagnostics.signal_valid ? cc1100_rssi_convert2dbm(diagnostics.rssi) : 0;
+  sdata.lqi = diagnostics.lqi;
+  sdata.freqest = diagnostics.freqest;
   return sdata;
 }
 

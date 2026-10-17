@@ -442,17 +442,25 @@ void MeterReader::performReading()
 tmeter_data MeterReader::readStandardAttempt()
 {
     m_totalReadAttempts++;
+    const float currentFreq = getTunedFrequency();
+    const float currentOffset = getFrequencyOffset();
     LOG_I("everblu_meter", "Reading attempt %lu (retry %d/%d) at %.6f MHz (offset: %.3f kHz)",
           m_totalReadAttempts, m_retryCount, m_config->getMaxRetries(),
-          getTunedFrequency(), getFrequencyOffset() * 1000.0);
-    m_radioConnected = radioInitCallback(getTunedFrequency());
-    if (!m_radioConnected)
-    {
-        tmeter_data failed{};
-        failed.failure = ReadFailure::NotAttempted;
-        return failed;
-    }
-    return meterReadCallback();
+          currentFreq, currentOffset * 1000.0);
+
+    // Publish this attempt even when initialization fails before reception.
+    tmeter_data data{};
+    m_radioConnected = radioInitCallback(currentFreq);
+    if (m_radioConnected)
+        data = meterReadCallback();
+    else
+        data.failure = ReadFailure::NotAttempted;
+
+    m_publisher->publishRadioDiagnostics(data);
+    m_publisher->publishStatistics(m_totalReadAttempts, m_successfulReads, m_failedReads);
+    m_publisher->publishFrequencyOffset(currentOffset);
+    m_publisher->publishTunedFrequency(currentFreq);
+    return data;
 }
 
 void MeterReader::handleSuccessfulRead(const tmeter_data &data)

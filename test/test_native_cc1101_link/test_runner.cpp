@@ -1,3 +1,4 @@
+void test_standard_fdr_standard_diagnostics_stay_per_attempt();
 void test_read_preserves_receive_time_frequency_estimate();
 void test_standard_request_remains_exactly_39_bytes();
 void test_fdr_complete_synthetic_pair_and_failures();
@@ -63,6 +64,11 @@ void test_get_meter_data_resolves_the_configured_meter_code(void);
 void test_every_recorded_capture_replays_through_the_radio(void);
 void test_receive_recovers_a_radio_that_ignores_the_first_rx_strobe(void);
 void test_receive_gives_up_on_a_radio_that_never_enters_rx(void);
+
+void test_read_captures_diagnostics_before_receive_cleanup(void);
+
+void test_read_diagnostics_do_not_leak_between_attempts(void);
+void test_read_diagnostics_ignore_ack_and_handle_partial_data(void);
 
 void setUp(void)
 {
@@ -132,7 +138,13 @@ int main(int, char **)
     RUN_TEST(test_fdr_receive_capacity_rounds_up_partial_serial_bytes);
     RUN_TEST(test_fdr_transmit_failures_restore_radio_without_receiving);
     RUN_TEST(test_fdr_complete_synthetic_pair_and_failures);
+    RUN_TEST(test_standard_fdr_standard_diagnostics_stay_per_attempt);
     RUN_TEST(test_read_preserves_receive_time_frequency_estimate);
     RUN_TEST(test_standard_request_remains_exactly_39_bytes);
+    RUN_TEST(test_read_captures_diagnostics_before_receive_cleanup);
+
+    RUN_TEST(test_read_diagnostics_do_not_leak_between_attempts);
+    RUN_TEST(test_read_diagnostics_ignore_ack_and_handle_partial_data);
+
     return UNITY_END();
 }

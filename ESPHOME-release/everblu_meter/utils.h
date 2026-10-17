@@ -1,3 +1,5 @@
+#pragma once
+
 /**
  * @file utils.h
  * @brief Utility functions for RADIAN protocol and debugging

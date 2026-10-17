@@ -240,8 +240,12 @@ bool FrequencyManager::readAt(float frequency, tmeter_data &data)
     }
     delay(50);
     data = s_meterReadCallback();
-    LOG_I("everblu_meter", "Scan %.6f MHz: reads=%d RSSI=%d FREQEST=%d", frequency,
-          data.reads_counter, data.rssi_dbm, data.freqest);
+    if (data.signal_valid)
+        LOG_I("everblu_meter", "Scan %.6f MHz: reads=%d RSSI=%d FREQEST=%d", frequency,
+              data.reads_counter, data.rssi_dbm, data.freqest);
+    else
+        LOG_I("everblu_meter", "Scan %.6f MHz: reads=%d RSSI=n/a FREQEST=n/a", frequency,
+              data.reads_counter);
     return true;
 }
 

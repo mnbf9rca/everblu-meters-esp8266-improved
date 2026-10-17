@@ -33,6 +33,7 @@
 #include "services/schedule_manager.h"  // Schedule management
 #include "services/meter_history.h"      // Shared historical data processing (JSON + serial)
 #include "services/frequency_manager.h" // Shared frequency calibration (scan/adaptive/storage)
+#include "adapters/implementations/mqtt_radio_diagnostics.h"
 #if defined(ESP8266)
 #include <ESP8266WiFi.h> // Wi-Fi library for ESP8266
 #include <ESP8266mDNS.h> // mDNS library for ESP8266
@@ -602,7 +603,20 @@ static void completeMeterRead()
 static tmeter_data readMeterOnce()
 {
   ++totalReadAttempts;
+  const float attemptedFrequency = FrequencyManager::getTunedFrequency();
+  const float attemptedOffset = FrequencyManager::getOffset();
   const tmeter_data data = get_meter_data();
+  publishMqttRadioDiagnostics(data, [](const char *topic, const char *payload, bool retain) {
+    publishSub(topic, payload, retain);
+    delay(5);
+  });
+  char attemptBuffer[24];
+  snprintf(attemptBuffer, sizeof(attemptBuffer), "%lu", totalReadAttempts);
+  publishSub("total_attempts", attemptBuffer, true);
+  snprintf(attemptBuffer, sizeof(attemptBuffer), "%.6f", attemptedFrequency);
+  publishSub("tuned_frequency", attemptBuffer, true);
+  snprintf(attemptBuffer, sizeof(attemptBuffer), "%.3f", attemptedOffset * 1000.0f);
+  publishSub("frequency_offset", attemptBuffer, true);
   const time_t now = time(nullptr);
   const tm *utc = gmtime(&now);
   TS_PRINTF("[TIME] Current date (UTC): %04d/%02d/%02d %02d:%02d:%02d - %ld\n",
@@ -689,17 +703,6 @@ static void publishSuccessfulRead(const tmeter_data &meter_data)
   publishSub("battery", valueBuffer, true);
   delay(5);
 
-  snprintf(valueBuffer, sizeof(valueBuffer), "%d", meter_data.rssi_dbm);
-  publishSub("rssi_dbm", valueBuffer, true);
-  delay(5);
-
-  snprintf(valueBuffer, sizeof(valueBuffer), "%d", calculateMeterdBmToPercentage(meter_data.rssi_dbm));
-  publishSub("rssi_percentage", valueBuffer, true);
-  delay(5);
-
-  snprintf(valueBuffer, sizeof(valueBuffer), "%d", meter_data.lqi);
-  publishSub("lqi", valueBuffer, true);
-  delay(5);
   publishSub("time_start", timeStartFormatted, true);
   delay(5);
   publishSub("time_end", timeEndFormatted, true);
@@ -709,10 +712,6 @@ static void publishSuccessfulRead(const tmeter_data &meter_data)
   publishSub("meter_time", meter_data.meter_time, true); // meter's own real-time clock
   delay(5);
   publishSub("meter_type", meter_data.meter_type, true); // meter type/identifier string
-  delay(5);
-
-  snprintf(valueBuffer, sizeof(valueBuffer), "%d", calculateLQIToPercentage(meter_data.lqi));
-  publishSub("lqi_percentage", valueBuffer, true);
   delay(5);
 
   // Publish all data as a JSON message as well this is redundant but may be useful for some
@@ -768,9 +767,6 @@ static void publishSuccessfulRead(const tmeter_data &meter_data)
 
   snprintf(metricBuffer, sizeof(metricBuffer), "%lu", successfulReads);
   publishSub("successful_reads", metricBuffer, true);
-
-  snprintf(metricBuffer, sizeof(metricBuffer), "%lu", totalReadAttempts);
-  publishSub("total_attempts", metricBuffer, true);
 
   publishSub("last_error", "None", true);
 
@@ -856,8 +852,6 @@ void onUpdateData()
       snprintf(buffer, sizeof(buffer), "%lu", failedReads);
       publishSub("failed_reads", buffer, true);
 
-      snprintf(buffer, sizeof(buffer), "%lu", totalReadAttempts);
-      publishSub("total_attempts", buffer, true);
       digitalWrite(LED_BUILTIN, HIGH); // Turn off LED
       _retry = 0;                      // Reset retry counter for next scheduled attempt
       g_retryFailureReason = ReadFailure::None;
@@ -961,8 +955,6 @@ void onRequestFullFdr()
     char count[16];
     snprintf(count, sizeof(count), "%lu", failedReads);
     publishSub("failed_reads", count, true);
-    snprintf(count, sizeof(count), "%lu", totalReadAttempts);
-    publishSub("total_attempts", count, true);
   }
   else
   {
@@ -1910,7 +1902,7 @@ void resetFrequencyOffset()
   char freqBuffer[16];
   snprintf(freqBuffer, sizeof(freqBuffer), "%.6f", FrequencyManager::getTunedFrequency());
   snprintf(topicBuffer, sizeof(topicBuffer), "%s/tuned_frequency", mqttBaseTopic);
-  mqtt.publish(topicBuffer, freqBuffer, false);
+  mqtt.publish(topicBuffer, freqBuffer, true);
 }
 
 // Function: printDiagnosticReport
@@ -2000,29 +1992,16 @@ void printDiagnosticReport()
 //              then mirrors the resulting offset to MQTT.
 void adaptiveFrequencyTracking(int8_t freqest)
 {
-  // Publish frequency_offset only when the shared tracker actually changed the
-  // stored offset, to avoid churning the retained MQTT topic on every read when
-  // the frequency is already stable.
+  // Refresh current tuning if successful-read tracking changed it after publication.
   const float offsetBefore = FrequencyManager::getOffset();
   FrequencyManager::adaptiveFrequencyTracking(freqest);
   if (FrequencyManager::getOffset() != offsetBefore)
   {
     publishFrequencyOffsetToMqtt();
+    char freqBuffer[16];
+    snprintf(freqBuffer, sizeof(freqBuffer), "%.6f", FrequencyManager::getTunedFrequency());
+    publishSub("tuned_frequency", freqBuffer, true);
   }
-
-  // Always publish tuned_frequency and frequency_estimate after each read so
-  // the corresponding HA sensors are not left blank/unknown.
-  char topicBuffer[MQTT_TOPIC_BUFFER_SIZE];
-  char freqBuffer[16];
-
-  snprintf(freqBuffer, sizeof(freqBuffer), "%.6f", FrequencyManager::getTunedFrequency());
-  snprintf(topicBuffer, sizeof(topicBuffer), "%s/tuned_frequency", mqttBaseTopic);
-  mqtt.publish(topicBuffer, freqBuffer, false);
-
-  constexpr float FREQEST_TO_KHZ = 1.587f;
-  snprintf(freqBuffer, sizeof(freqBuffer), "%.3f", static_cast<float>(freqest) * FREQEST_TO_KHZ);
-  snprintf(topicBuffer, sizeof(topicBuffer), "%s/frequency_estimate", mqttBaseTopic);
-  mqtt.publish(topicBuffer, freqBuffer, false);
 }
 
 /**

@@ -459,3 +459,79 @@ void test_read_preserves_receive_time_frequency_estimate() {
     TEST_ASSERT_EQUAL_INT8(-2, data.freqest);
     TEST_ASSERT_EQUAL_UINT8(37, nativeCC1101().freqEst);
 }
+
+void test_read_captures_diagnostics_before_receive_cleanup(void)
+{
+    RawCapture capture;
+    TEST_ASSERT_TRUE(armRadioWithCapture(capture));
+    nativeCC1101().timedDiagnostics = true;
+    nativeCC1101().rssiRaw = 0x80; // -138 dBm must not wrap to a positive int8_t.
+    nativeCC1101().lqiRaw = 0x87;
+    nativeCC1101().freqEst = 0xFE;
+    const tmeter_data data = readFixtureMeter();
+    TEST_ASSERT_TRUE(data.failure == ReadFailure::None);
+    TEST_ASSERT_EQUAL_INT(-138, data.rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(7, data.lqi);
+    TEST_ASSERT_EQUAL_INT(-2, data.freqest);
+}
+
+void test_read_diagnostics_do_not_leak_between_attempts(void)
+{
+    RawCapture capture;
+    TEST_ASSERT_TRUE(armRadioWithCapture(capture));
+    nativeCC1101().timedDiagnostics = true;
+    nativeCC1101().rssiRaw = 0x14;
+    nativeCC1101().lqiRaw = 0x87;
+    nativeCC1101().freqEst = 0xFE;
+    tmeter_data data = readFixtureMeter();
+    TEST_ASSERT_TRUE(data.signal_valid);
+    TEST_ASSERT_TRUE(data.lqi_valid);
+
+    for (size_t i = capture.oversampled.size() / 2; i < capture.oversampled.size() / 2 + 24; i++)
+        capture.oversampled[i] = (uint8_t)~capture.oversampled[i];
+    nativeCC1101ArmReply(capture.oversampled);
+    nativeCC1101().receiveWindow = 0;
+    data = readFixtureMeter();
+    TEST_ASSERT_TRUE(data.failure == ReadFailure::CrcFailed);
+    TEST_ASSERT_TRUE(data.signal_valid);
+    TEST_ASSERT_TRUE(data.lqi_valid);
+    TEST_ASSERT_EQUAL_INT(-64, data.rssi_dbm);
+    TEST_ASSERT_EQUAL_INT(7, data.lqi);
+    TEST_ASSERT_EQUAL_INT(-2, data.freqest);
+    TEST_ASSERT_EQUAL_INT(0, data.volume);
+
+    nativeCC1101ArmReply({});
+    data = readFixtureMeter();
+    TEST_ASSERT_TRUE(data.failure == ReadFailure::NoReply);
+    TEST_ASSERT_FALSE(data.signal_valid);
+    TEST_ASSERT_FALSE(data.lqi_valid);
+}
+
+void test_read_diagnostics_ignore_ack_and_handle_partial_data(void)
+{
+    // Finite capture: 64 ACK sync + 112 ACK payload + 64 data sync + data payload.
+    const size_t lengths[] = {176, 240, 247, 248};
+    for (size_t length : lengths)
+    {
+        RawCapture capture;
+        TEST_ASSERT_TRUE(armRadioWithCapture(capture));
+        capture.oversampled.resize(length);
+        nativeCC1101ArmReply(capture.oversampled);
+        nativeCC1101().rxRewindOnFlush = false;
+        nativeCC1101().timedDiagnostics = true;
+        nativeCC1101().rssiRaw = 0x14;
+        nativeCC1101().lqiRaw = 0x87;
+        nativeCC1101().freqEst = 0xFE;
+        const tmeter_data data = readFixtureMeter();
+        TEST_ASSERT_TRUE(data.failure == ReadFailure::NoReply);
+        TEST_ASSERT_EQUAL(length >= 240, data.signal_valid);
+        TEST_ASSERT_EQUAL(length >= 248, data.lqi_valid);
+        if (data.signal_valid)
+        {
+            TEST_ASSERT_EQUAL_INT(length == 240 ? -82 : -64, data.rssi_dbm);
+            TEST_ASSERT_EQUAL_INT(-2, data.freqest);
+        }
+        if (data.lqi_valid) TEST_ASSERT_EQUAL_INT(7, data.lqi);
+        TEST_ASSERT_EQUAL_INT(0, data.volume);
+    }
+}

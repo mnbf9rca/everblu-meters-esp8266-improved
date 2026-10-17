@@ -155,7 +155,8 @@ void test_standard_request_remains_exactly_39_bytes() {
 
 // Exercise the actual receive guard: an odd-length response needs a rounded-up
 // serial byte, so insufficient capacity must be rejected before touching SPI.
-extern int receive_radian_frame(int size_byte, int timeout_ms, uint8_t *buffer, int capacity, int8_t *frequency_estimate = nullptr);
+struct RadioDiagnostics;
+extern int receive_radian_frame(int size_byte, int timeout_ms, uint8_t *buffer, int capacity, RadioDiagnostics *diagnostics = nullptr);
 void test_fdr_receive_capacity_rounds_up_partial_serial_bytes() {
     TEST_ASSERT_TRUE(cc1101_init(433.82f));
     const struct { int decoded; int raw; } sizes[] = {{18, 112}, {124, 748}, {137, 828}, {139, 840}};
@@ -212,6 +213,7 @@ std::vector<uint8_t> oversample(const std::vector<uint8_t> &frame) {
 void pairTransfer(uint8_t *buffer, size_t length) {
     if (length == 1 && buffer[0] == 0x3B) pair_wake_bytes = 0; // SFTX starts a new phase
     if (length == 1 && buffer[0] == 0x35) {
+        nativeCC1101().receiveWindow = 0;
         nativeCC1101ArmReply(exchanges < replies.size() ? replies[exchanges] : std::vector<uint8_t>{});
         ++exchanges;
         requests.emplace_back();
@@ -265,5 +267,52 @@ void test_fdr_complete_synthetic_pair_and_failures() {
             TEST_ASSERT_EQUAL_size_t(size, requests[i].size());
             TEST_ASSERT_EQUAL_UINT8_ARRAY(encoded, requests[i].data(), size);
         }
+    }
+}
+
+void test_standard_fdr_standard_diagnostics_stay_per_attempt() {
+    std::vector<uint8_t> standard(124, 0);
+    standard[0] = standard.size();
+    standard[1] = 0x11;
+    standard[18] = 42;
+    const uint16_t crc = radian_crc_kermit(standard.data(), standard.size() - 2);
+    standard[standard.size() - 2] = crc >> 8;
+    standard.back() = crc;
+    for (bool final_reply : {true, false}) {
+        installPair();
+        replies = {oversample(standard), oversample(response(7)), oversample(response(8)),
+                   final_reply ? oversample(standard) : std::vector<uint8_t>{}};
+        auto &radio = nativeCC1101();
+        radio.timedDiagnostics = true;
+        radio.rssiRaw = 0x14;
+        radio.lqiRaw = 0x87;
+        radio.freqEst = 0xFE;
+        auto data = get_meter_data_for_meter(21, 123456);
+        TEST_ASSERT_EQUAL(ReadFailure::None, data.failure);
+        TEST_ASSERT_TRUE(data.signal_valid);
+        TEST_ASSERT_TRUE(data.lqi_valid);
+        TEST_ASSERT_EQUAL_INT(-64, data.rssi_dbm);
+        TEST_ASSERT_EQUAL_INT(7, data.lqi);
+        TEST_ASSERT_EQUAL_INT(-2, data.freqest);
+
+        radio.rssiRaw = 80;
+        radio.lqiRaw = 99;
+        radio.freqEst = 42;
+        radian_fdr_data fdr{};
+        TEST_ASSERT_TRUE(read_full_fdr_for_meter(21, 123456, &fdr));
+        TEST_ASSERT_EQUAL_UINT32(42, fdr.current_index);
+
+        radio.rssiRaw = 0x80;
+        radio.lqiRaw = 0x89;
+        radio.freqEst = uint8_t(-5);
+        data = get_meter_data_for_meter(21, 123456);
+        TEST_ASSERT_EQUAL(final_reply ? ReadFailure::None : ReadFailure::NoReply, data.failure);
+        TEST_ASSERT_EQUAL(final_reply, data.signal_valid);
+        TEST_ASSERT_EQUAL(final_reply, data.lqi_valid);
+        TEST_ASSERT_EQUAL_INT(final_reply ? -138 : 0, data.rssi_dbm);
+        TEST_ASSERT_EQUAL_INT(final_reply ? 9 : 0, data.lqi);
+        TEST_ASSERT_EQUAL_INT(final_reply ? -5 : 0, data.freqest);
+        TEST_ASSERT_EQUAL_INT(final_reply ? 42 : 0, data.volume);
+        TEST_ASSERT_EQUAL_UINT(4, exchanges);
     }
 }

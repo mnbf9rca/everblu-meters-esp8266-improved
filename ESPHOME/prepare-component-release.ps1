@@ -92,9 +92,9 @@ foreach ($f in $filesToMove) {
     }
 }
 
-# Remove MQTT publisher files (not used in ESPHome)
-Write-Host "Removing MQTT publisher (ESPHome not using it)..." -ForegroundColor Yellow
-Get-ChildItem -Path $RELEASE_DIR -Filter "mqtt_data_publisher.*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+# Remove MQTT-only files (not used in ESPHome)
+Write-Host "Removing MQTT-only files..." -ForegroundColor Yellow
+Get-ChildItem -Path $RELEASE_DIR -Filter "mqtt_*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
 # Remove now-empty subdirectories
 Get-ChildItem -Path $RELEASE_DIR -Directory -Recurse | Sort-Object FullName -Descending | ForEach-Object {

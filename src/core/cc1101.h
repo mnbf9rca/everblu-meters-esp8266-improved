@@ -327,6 +327,8 @@ struct tmeter_data
   int rssi_dbm;           // RSSI converted to dBm
   int lqi;                // Link Quality Indicator (0-127, lower is better; CRC_OK bit masked)
   int8_t freqest;         // Frequency offset estimate from CC1101 for adaptive tracking
+  bool signal_valid;      // RSSI and frequency estimate sampled in this data receive window
+  bool lqi_valid;         // At least 64 symbols received for the CC1101 LQI estimate
   uint32_t history[13];   // Monthly historical readings (13 months), index 0 = oldest, 12 = most recent
   bool history_available; // True if historical data was successfully extracted
   char meter_time[32];    // Meter real-time clock "YYYY-MM-DD HH:MM:SS" (empty if not decoded)

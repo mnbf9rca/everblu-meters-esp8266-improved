@@ -13,7 +13,7 @@ void test_pub_reading_publishes_each_sensor_once(void);
 void test_pub_reading_formats_wake_window_with_leading_zeros(void);
 void test_pub_reading_omits_empty_meter_clock_and_model(void);
 void test_pub_reading_publishes_meter_clock_and_model_when_present(void);
-void test_pub_reading_publishes_frequency_estimate_in_khz(void);
+void test_pub_diagnostics_publish_frequency_estimate_in_khz(void);
 void test_pub_reading_without_sensors_is_safe(void);
 void test_pub_lqi_percentage_matches_the_shared_helper(void);
 void test_pub_lqi_percentage_masks_the_crc_ok_bit(void);
@@ -47,6 +47,11 @@ void test_pub_full_fdr_requires_output_and_isolates_meters(void);
 
 void test_pub_full_fdr_allocation_failure_preserves_state(void);
 
+void test_pub_reading_does_not_publish_radio_diagnostics(void);
+
+void test_pub_failed_diagnostics_clear_missing_metrics_without_changing_meter_data(void);
+void test_pub_radio_diagnostics_are_per_meter(void);
+
 void setUp(void) { esphomePublisherSetUp(); }
 void tearDown(void) { esphomePublisherTearDown(); }
 
@@ -57,12 +62,17 @@ int main(int, char **)
     RUN_TEST(test_pub_full_fdr_is_separate_and_preserves_last_success);
     RUN_TEST(test_pub_full_fdr_requires_output_and_isolates_meters);
 
+    RUN_TEST(test_pub_failed_diagnostics_clear_missing_metrics_without_changing_meter_data);
+    RUN_TEST(test_pub_radio_diagnostics_are_per_meter);
+
+    RUN_TEST(test_pub_reading_does_not_publish_radio_diagnostics);
+
     RUN_TEST(test_pub_reading_populates_every_sensor);
     RUN_TEST(test_pub_reading_publishes_each_sensor_once);
     RUN_TEST(test_pub_reading_formats_wake_window_with_leading_zeros);
     RUN_TEST(test_pub_reading_omits_empty_meter_clock_and_model);
     RUN_TEST(test_pub_reading_publishes_meter_clock_and_model_when_present);
-    RUN_TEST(test_pub_reading_publishes_frequency_estimate_in_khz);
+    RUN_TEST(test_pub_diagnostics_publish_frequency_estimate_in_khz);
     RUN_TEST(test_pub_reading_without_sensors_is_safe);
 
     RUN_TEST(test_pub_lqi_percentage_matches_the_shared_helper);

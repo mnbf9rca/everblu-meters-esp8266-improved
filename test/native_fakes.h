@@ -231,6 +231,7 @@ public:
     void (*onFdrPublish)() = nullptr;
 
     std::vector<Reading> readings;
+    std::vector<tmeter_data> diagnostics;
     std::vector<std::string> statuses;
     std::vector<std::string> radioStates;
     std::vector<std::string> errors;
@@ -280,7 +281,7 @@ public:
                            unsigned long failedReads) override;
     void publishFrequencyOffset(float offsetMHz) override;
     void publishTunedFrequency(float frequencyMHz) override;
-    void publishFrequencyEstimate(int8_t freqestValue) override;
+    void publishRadioDiagnostics(const tmeter_data &data) override;
     void publishUptime(unsigned long uptimeSeconds, const char *uptimeISO) override;
     void publishFirmwareVersion(const char *version) override;
     void publishDiscovery() override;

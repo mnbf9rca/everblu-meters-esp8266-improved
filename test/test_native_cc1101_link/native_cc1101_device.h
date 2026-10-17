@@ -86,6 +86,12 @@ struct NativeCC1101
     uint8_t rssiRaw = 0x0C;                ///< Raw RSSI register; 0x0C is -68 dBm, a normal link
     uint8_t lqiRaw = 0x0A;
     uint8_t freqEst = 0x00;
+    // Opt-in timing checks: stale/early register reads must not look valid.
+    bool timedDiagnostics = false;
+    unsigned receiveWindow = 0;
+    size_t stageBytes = 0;
+    bool stageTwo = false;
+    bool diagnosticsActive = false;
 
     // ---- Transmit --------------------------------------------------------
     uint8_t txBytes = 0;    ///< Bytes sitting in the 64-byte TX FIFO
@@ -164,10 +170,17 @@ inline uint8_t readRegister(NativeCC1101 &device, uint8_t address, bool is_statu
         case 0x31: // VERSION
             return device.version;
         case 0x32: // FREQEST
-            return device.freqEst;
+            return device.timedDiagnostics && device.receiveWindow != 2 ? 42 : device.freqEst;
         case 0x33: // LQI
-            return device.lqiRaw;
+            return device.timedDiagnostics && (!device.diagnosticsActive ||
+                !device.stageTwo || device.stageBytes < 8) ? 99 : device.lqiRaw;
         case 0x34: // RSSI
+            if (device.timedDiagnostics)
+            {
+                if (!device.diagnosticsActive) return 100;
+                if (device.receiveWindow != 2) return 80;
+                if (!device.stageTwo) return 0xF0;
+            }
             return device.rssiRaw;
         case 0x35: // MARCSTATE
             return device.marcstate;
@@ -293,6 +306,10 @@ inline void applyTransaction(NativeCC1101 &device, uint8_t *buffer, size_t lengt
                 device.marcstate = 0x11; // RXFIFO_OVERFLOW: SRX is ignored until a flush
                 break;
             }
+            device.stageTwo = device.config[0x05] == 0xF0;
+            if (device.config[0x05] == 0x50) device.receiveWindow++;
+            device.stageBytes = 0;
+            device.diagnosticsActive = true;
             device.marcstate = 0x0D;
             device.chipState = kChipStateRx;
             break;
@@ -307,6 +324,7 @@ inline void applyTransaction(NativeCC1101 &device, uint8_t *buffer, size_t lengt
             device.chipState = kChipStateIdle;
             break;
         case 0x3A: // SFRX - rewind the reply so the next receive starts clean
+            device.diagnosticsActive = false;
             if (device.rxRewindOnFlush)
             {
                 device.rxPos = 0;
@@ -336,6 +354,7 @@ inline void applyTransaction(NativeCC1101 &device, uint8_t *buffer, size_t lengt
             for (size_t i = 1; i < length; i++)
             {
                 const uint8_t raw = device.rxPos < device.rxFrame.size() ? device.rxFrame[device.rxPos++] : 0x00;
+                device.stageBytes++;
                 buffer[i] = applyFault(device, raw, false);
             }
             return;

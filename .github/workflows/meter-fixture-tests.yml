@@ -15,6 +15,7 @@ on:
       - test/test_native_esphome_publisher/**
       - test/test_native_meter_fixtures/**
       - test/test_native_meter_reader/**
+      - test/test_native_mqtt_diagnostics/**
       - test/test_embedded_unit/**
       - .github/workflows/meter-fixture-tests.yml
   pull_request:
@@ -31,6 +32,7 @@ on:
       - test/test_native_esphome_publisher/**
       - test/test_native_meter_fixtures/**
       - test/test_native_meter_reader/**
+      - test/test_native_mqtt_diagnostics/**
       - test/test_embedded_unit/**
       - .github/workflows/meter-fixture-tests.yml
   workflow_dispatch:

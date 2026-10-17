@@ -191,6 +191,22 @@ void test_reading_is_skipped_when_publisher_not_ready(void)
     TEST_ASSERT_FALSE(reader.isReadingInProgress());
 }
 
+void test_failed_attempt_publishes_attempt_statistics(void)
+{
+    fakeRadio().responses.push_back(FakeRadio::failure(ReadFailure::NoReply));
+    MeterReader reader = makeReader();
+    reader.triggerReading(false);
+
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.statistics.size());
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_EQUAL_UINT32(0, g_publisher.statistics.back().successes);
+    TEST_ASSERT_EQUAL_UINT32(0, g_publisher.statistics.back().failures);
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.tunedFrequencies.size());
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().calls.back().frequency, g_publisher.tunedFrequencies.back());
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.frequencyOffsets.size());
+    TEST_ASSERT_EQUAL_FLOAT(reader.getFrequencyOffset(), g_publisher.frequencyOffsets.back());
+}
+
 // ---------------------------------------------------------------------------
 // Retry sequence
 // ---------------------------------------------------------------------------
@@ -1454,6 +1470,11 @@ void test_fdr_keeps_busy_through_fresh_read_capture_and_publication()
     TEST_ASSERT_EQUAL(1, g_publisher.readings.size());
     TEST_ASSERT_EQUAL(1, g_publisher.historyPublishes);
     TEST_ASSERT_EQUAL(1, g_publisher.fdrPublishes);
+    TEST_ASSERT_EQUAL(1, g_publisher.diagnostics.size());
+    TEST_ASSERT_TRUE(g_publisher.diagnostics.front().signal_valid);
+    TEST_ASSERT_TRUE(g_publisher.diagnostics.front().lqi_valid);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.front().attempts);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().calls.front().frequency, g_publisher.tunedFrequencies.front());
     TEST_ASSERT_TRUE(g_publisher.fdrHasClock);
     TEST_ASSERT_EQUAL(124, g_publisher.fdrClock.tm_year);
     TEST_ASSERT_EQUAL(g_time.nowUtc, g_publisher.fdrCapturedAt);
@@ -1477,6 +1498,15 @@ void test_fdr_failure_never_retries_scans_or_reads_archive_after_standard_failur
     TEST_ASSERT_FALSE(reader.isReadingInProgress());
     TEST_ASSERT_FALSE(FrequencyManager::isScanInProgress());
     TEST_ASSERT_EQUAL(0, fakeRadio().fdrCalls.size());
+    TEST_ASSERT_EQUAL(0, g_publisher.fdrPublishes);
+    TEST_ASSERT_TRUE(g_publisher.readings.empty());
+    TEST_ASSERT_EQUAL(0, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL(1, g_publisher.diagnostics.size());
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.front().signal_valid);
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.front().lqi_valid);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().failures);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().calls.front().frequency, g_publisher.tunedFrequencies.front());
     advanceAndLoop(reader, RETRY_DELAY_MS + 1);
     TEST_ASSERT_EQUAL(1, fakeRadio().calls.size());
     unsigned long attempts, successes, failures;
@@ -1560,6 +1590,10 @@ void test_fdr_uses_selected_meter_calibration_and_adaptive_tuning()
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, g_config.frequency, fakeRadio().calls.back().frequency);
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, reader.getTunedFrequency(), fakeRadio().fdrCalls.back().frequency);
     TEST_ASSERT_TRUE(reader.getTunedFrequency() > g_config.frequency);
+    TEST_ASSERT_EQUAL(1, g_publisher.diagnostics.size());
+    TEST_ASSERT_EQUAL(10, g_publisher.diagnostics.front().freqest);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().calls.front().frequency, g_publisher.tunedFrequencies.front());
+    TEST_ASSERT_EQUAL_FLOAT(reader.getTunedFrequency(), g_publisher.tunedFrequencies.back());
     TEST_ASSERT_EQUAL(21, fakeRadio().fdrCalls.back().year);
     TEST_ASSERT_TRUE(other.readFullFdr());
     TEST_ASSERT_EQUAL(22, fakeRadio().fdrCalls.back().year);
@@ -1575,6 +1609,21 @@ void test_fdr_radio_init_failure_releases_busy_without_retry()
     TEST_ASSERT_EQUAL(0, fakeRadio().calls.size());
     TEST_ASSERT_EQUAL(0, fakeRadio().fdrCalls.size());
     TEST_ASSERT_EQUAL(2, g_publisher.activeReadingFlags.size());
+    TEST_ASSERT_EQUAL(0, g_publisher.fdrPublishes);
+    TEST_ASSERT_TRUE(g_publisher.readings.empty());
+    TEST_ASSERT_EQUAL(0, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL(1, g_publisher.diagnostics.size());
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.front().signal_valid);
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.front().lqi_valid);
+    TEST_ASSERT_EQUAL(static_cast<int>(ReadFailure::NotAttempted),
+                      static_cast<int>(g_publisher.diagnostics.front().failure));
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().failures);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().lastInitFrequency(), g_publisher.tunedFrequencies.front());
+    const size_t inits = fakeRadio().initFrequencies.size();
+    advanceAndLoop(reader, RETRY_DELAY_MS + 1);
+    TEST_ASSERT_EQUAL(inits, fakeRadio().initFrequencies.size());
+    TEST_ASSERT_FALSE(FrequencyManager::isScanInProgress());
 }
 
 
@@ -1647,4 +1696,122 @@ void test_fdr_rejects_gas_before_radio_and_preserves_standard_read()
     reader.triggerReading(false);
     TEST_ASSERT_EQUAL(1, fakeRadio().calls.size());
     TEST_ASSERT_EQUAL(1, g_publisher.readings.size());
+}
+
+void test_each_retry_publishes_fresh_diagnostics_without_tracking_failures(void)
+{
+    tmeter_data corrupt = FakeRadio::failure(ReadFailure::CrcFailed);
+    corrupt.signal_valid = true;
+    corrupt.lqi_valid = true;
+    corrupt.rssi_dbm = -130;
+    corrupt.freqest = -40;
+    corrupt.lqi = 40;
+    fakeRadio().responses = {corrupt, FakeRadio::failure(ReadFailure::NoReply), FakeRadio::success(12345, 20)};
+    MeterReader reader = makeReader();
+    FrequencyManager::setAdaptiveThreshold(1);
+    const float offset = reader.getFrequencyOffset();
+    reader.triggerReading(false);
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_TRUE(g_publisher.diagnostics[0].signal_valid);
+    TEST_ASSERT_EQUAL(-130, g_publisher.diagnostics[0].rssi_dbm);
+    TEST_ASSERT_EQUAL(-40, g_publisher.diagnostics[0].freqest);
+    TEST_ASSERT_TRUE(g_publisher.readings.empty());
+    TEST_ASSERT_EQUAL(0, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL_FLOAT(offset, reader.getFrequencyOffset());
+
+    advanceAndLoop(reader, RETRY_DELAY_MS);
+    TEST_ASSERT_EQUAL(2, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_FALSE(g_publisher.diagnostics[1].signal_valid);
+    TEST_ASSERT_FALSE(g_publisher.diagnostics[1].lqi_valid);
+    TEST_ASSERT_EQUAL_UINT32(2, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_TRUE(g_publisher.readings.empty());
+    TEST_ASSERT_EQUAL(0, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL_FLOAT(offset, reader.getFrequencyOffset());
+
+    advanceAndLoop(reader, RETRY_DELAY_MS);
+    TEST_ASSERT_EQUAL(3, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_TRUE(g_publisher.diagnostics[2].signal_valid);
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.readings.size());
+    TEST_ASSERT_EQUAL(1, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().calls[2].frequency, g_publisher.tunedFrequencies[2]);
+    TEST_ASSERT_TRUE(reader.getFrequencyOffset() > offset);
+}
+
+void test_radio_initialization_failure_clears_previous_diagnostics(void)
+{
+    fakeRadio().responses = {FakeRadio::success()};
+    MeterReader reader = makeReader();
+    reader.triggerReading(false);
+    fakeRadio().initSucceeds = false;
+    reader.triggerReading(false);
+    TEST_ASSERT_EQUAL(2, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.back().signal_valid);
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.back().lqi_valid);
+    TEST_ASSERT_EQUAL(1, (int)fakeRadio().calls.size());
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.readings.size());
+    TEST_ASSERT_EQUAL(1, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL_UINT32(2, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_EQUAL_FLOAT(fakeRadio().lastInitFrequency(), g_publisher.tunedFrequencies.back());
+}
+
+void test_reader_diagnostics_are_per_meter_and_scans_do_not_publish_them(void)
+{
+    MeterReader first = makeReader();
+    FakeConfig secondConfig;
+    secondConfig.meterSerial++;
+    RecordingPublisher secondPublisher;
+    MeterReader second(&secondConfig, &g_time, &secondPublisher);
+    second.begin();
+    secondPublisher.reset();
+    fakeRadio().responses = {FakeRadio::success(), FakeRadio::failure(ReadFailure::NoReply)};
+    first.triggerReading(false);
+    second.triggerReading(false);
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_EQUAL(1, (int)secondPublisher.diagnostics.size());
+    TEST_ASSERT_TRUE(g_publisher.diagnostics[0].signal_valid);
+    TEST_ASSERT_FALSE(secondPublisher.diagnostics[0].signal_valid);
+    second.stopReading();
+    first.performFrequencyScan(false);
+    drainFrequencyScan(first);
+    TEST_ASSERT_EQUAL(1, (int)g_publisher.diagnostics.size());
+    TEST_ASSERT_EQUAL(1, (int)secondPublisher.diagnostics.size());
+}
+
+void test_fdr_partial_pre_read_refreshes_diagnostics_without_tuning_or_publication()
+{
+    g_config.autoScanOnFailure = true;
+    tmeter_data partial = FakeRadio::failure(ReadFailure::CrcFailed);
+    partial.signal_valid = true;
+    partial.rssi_dbm = -115;
+    partial.freqest = -40;
+    fakeRadio().responses = {clockReading("2024-03-15 12:00:00"), partial};
+    MeterReader reader = makeReader();
+    reader.setAdaptiveThreshold(1);
+    TEST_ASSERT_TRUE(reader.readFullFdr());
+    const float offset = reader.getFrequencyOffset();
+    const float frequency = reader.getTunedFrequency();
+    nativeClockAdvance(60000);
+    TEST_ASSERT_FALSE(reader.readFullFdr());
+    TEST_ASSERT_EQUAL(2, g_publisher.diagnostics.size());
+    TEST_ASSERT_TRUE(g_publisher.diagnostics.back().signal_valid);
+    TEST_ASSERT_FALSE(g_publisher.diagnostics.back().lqi_valid);
+    TEST_ASSERT_EQUAL(-115, g_publisher.diagnostics.back().rssi_dbm);
+    TEST_ASSERT_EQUAL(-40, g_publisher.diagnostics.back().freqest);
+    TEST_ASSERT_EQUAL_FLOAT(offset, reader.getFrequencyOffset());
+    TEST_ASSERT_EQUAL_FLOAT(offset, g_publisher.frequencyOffsets.back());
+    TEST_ASSERT_EQUAL_FLOAT(frequency, g_publisher.tunedFrequencies.back());
+    TEST_ASSERT_EQUAL(1, g_publisher.readings.size());
+    TEST_ASSERT_EQUAL(1, g_publisher.historyPublishes);
+    TEST_ASSERT_EQUAL(1, g_publisher.fdrPublishes);
+    TEST_ASSERT_EQUAL(1, fakeRadio().fdrCalls.size());
+    TEST_ASSERT_EQUAL_UINT32(2, g_publisher.statistics.back().attempts);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().successes);
+    TEST_ASSERT_EQUAL_UINT32(1, g_publisher.statistics.back().failures);
+    TEST_ASSERT_FALSE(reader.isReadingInProgress());
+    TEST_ASSERT_FALSE(FrequencyManager::isScanInProgress());
+    advanceAndLoop(reader, RETRY_DELAY_MS + 1);
+    TEST_ASSERT_EQUAL(2, fakeRadio().calls.size());
+    TEST_ASSERT_FALSE(reader.readFullFdr()); // Failure still consumes the rate limit.
+    TEST_ASSERT_EQUAL(2, fakeRadio().calls.size());
+    TEST_ASSERT_EQUAL(2, g_publisher.diagnostics.size());
 }

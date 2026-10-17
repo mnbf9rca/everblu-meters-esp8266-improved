@@ -13,6 +13,7 @@
 void meterReaderSetUp();
 void frequencyManagerSetUp();
 
+void test_fdr_partial_pre_read_refreshes_diagnostics_without_tuning_or_publication();
 void test_fdr_rejects_gas_before_radio_and_preserves_standard_read();
 void test_fdr_keeps_busy_through_fresh_read_capture_and_publication();
 void test_fdr_failure_never_retries_scans_or_reads_archive_after_standard_failure();
@@ -60,6 +61,11 @@ void test_disabled_scheduled_readings_still_allow_manual_reads(void);
 void test_cooldown_blocks_scheduled_reads_until_it_expires(void);
 void test_cooldown_applies_to_a_failure_at_time_zero(void);
 void test_statistics_are_republished_periodically(void);
+void test_failed_attempt_publishes_attempt_statistics(void);
+void test_each_retry_publishes_fresh_diagnostics_without_tracking_failures(void);
+void test_radio_initialization_failure_clears_previous_diagnostics(void);
+void test_reader_diagnostics_are_per_meter_and_scans_do_not_publish_them(void);
+
 void test_auto_scan_on_failure_runs_once_per_failure_streak(void);
 void test_auto_scan_on_failure_is_rearmed_by_a_success(void);
 void test_staged_scan_falls_back_and_finds_a_narrow_carrier();
@@ -151,6 +157,7 @@ void tearDown(void) {}
 int main(int, char **)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_fdr_partial_pre_read_refreshes_diagnostics_without_tuning_or_publication);
 
     // MeterReader
     RUN_TEST(test_begin_reports_radio_failure);
@@ -187,6 +194,11 @@ int main(int, char **)
     RUN_TEST(test_cooldown_blocks_scheduled_reads_until_it_expires);
     RUN_TEST(test_cooldown_applies_to_a_failure_at_time_zero);
     RUN_TEST(test_statistics_are_republished_periodically);
+    RUN_TEST(test_failed_attempt_publishes_attempt_statistics);
+    RUN_TEST(test_each_retry_publishes_fresh_diagnostics_without_tracking_failures);
+    RUN_TEST(test_radio_initialization_failure_clears_previous_diagnostics);
+    RUN_TEST(test_reader_diagnostics_are_per_meter_and_scans_do_not_publish_them);
+
     RUN_TEST(test_auto_scan_on_failure_runs_once_per_failure_streak);
     RUN_TEST(test_auto_scan_on_failure_is_rearmed_by_a_success);
     RUN_TEST(test_auto_scan_on_failure_is_rearmed_by_the_next_scheduled_read);

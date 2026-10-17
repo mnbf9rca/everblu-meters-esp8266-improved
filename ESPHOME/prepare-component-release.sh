@@ -56,9 +56,9 @@ rm -f "$RELEASE_DIR/adapters/implementations/define_config_provider.h"
 echo "Flattening sources into a single folder..."
 find "$RELEASE_DIR" -mindepth 2 -type f \( -name "*.h" -o -name "*.hpp" -o -name "*.c" -o -name "*.cpp" \) -exec mv -f {} "$RELEASE_DIR/" \;
 
-# Remove MQTT publisher (not used in ESPHome)
-echo "Removing MQTT publisher (ESPHome not using it)..."
-find "$RELEASE_DIR" -maxdepth 1 -type f -name "mqtt_data_publisher.*" -exec rm -f {} +
+# Remove MQTT-only files (not used in ESPHome)
+echo "Removing MQTT-only files..."
+find "$RELEASE_DIR" -maxdepth 1 -type f -name "mqtt_*" -exec rm -f {} +
 
 # Remove now-empty directories
 find "$RELEASE_DIR" -mindepth 1 -type d -empty -delete
